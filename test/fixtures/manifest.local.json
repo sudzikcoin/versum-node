@@ -1,0 +1,11 @@
+{
+  "_": "A manifest for `versum-node run-local`: inputs carry a local path instead of a signed url. The image is python:3.12-alpine pinned by digest.",
+  "attempt_id": "11111111-1111-4111-8111-111111111111", "piece_id": "22222222-2222-4222-8222-222222222222", "job_id": "33333333-3333-4333-8333-333333333333",
+  "kind": "python", "image": "python@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d", "command": ["python", "/job/in/run.py"], "env": { "THREADS": "2" }, "args": { "shard": 3, "of": 8 },
+  "limits": { "cpu_cores": 1, "ram_mb": 256, "disk_mb": 64, "gpu": false, "network": false, "time_limit_minutes": 2 },
+  "inputs": [
+    { "name": "run.py", "url": "https://local/run.py", "size_bytes": 1, "path": "test/fixtures/run.py" },
+    { "name": "data.txt", "url": "https://local/data.txt", "size_bytes": 20, "path": "test/fixtures/data.txt" }
+  ],
+  "price_per_minute_usd": 0.01
+}

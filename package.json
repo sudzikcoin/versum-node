@@ -1,0 +1,18 @@
+{
+  "name": "versum-node",
+  "version": "0.1.0",
+  "description": "Share your computer's spare compute with the Versum network: scan the machine, choose what to share and a price per minute, run buyers' jobs in a wiped container, get paid in USDC on Base.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/sudzikcoin/versum-node.git" },
+  "homepage": "https://versum.suverse.io",
+  "bin": { "versum-node": "bin/versum-node.mjs" },
+  "files": ["bin", "lib", "egress", "installer", "protocol", "docs", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "scan": "node bin/versum-node.mjs scan",
+    "start": "node bin/versum-node.mjs start"
+  },
+  "dependencies": {}
+}

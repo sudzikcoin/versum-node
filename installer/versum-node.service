@@ -1,0 +1,24 @@
+# versum-node as a systemd USER unit (rootless): ~/.config/systemd/user/versum-node.service
+#   systemctl --user daemon-reload && systemctl --user enable --now versum-node
+#   loginctl enable-linger $USER      # keep it running when you are not logged in
+[Unit]
+Description=Versum node — shares this computer's spare compute by the minute
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.versum-node/bin/versum-node start
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+# SIGTERM = drain: no new jobs, running ones finish (bounded by their time limit)
+TimeoutStopSec=3600
+Environment=VERSUM_NODE_HOME=%h/.versum-node
+NoNewPrivileges=true
+ProtectHome=read-only
+ReadWritePaths=%h/.versum-node
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

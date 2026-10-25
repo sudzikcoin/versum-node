@@ -44,6 +44,7 @@ Source: "{#SourceDir}\versum-node.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\versum-sandbox.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\launch.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\pylib-lock.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\probe\*"; DestDir: "{app}\probe"; Flags: ignoreversion recursesubdirs createallsubdirs

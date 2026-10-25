@@ -107,6 +107,14 @@ uploads `/job/out`, reports, removes the container and the working directory. Al
 macOS (sandbox-exec) node they are the `in/` and `out/` folders of the attempt, and the working directory is
 the attempt's folder. A script written as `os.environ.get('VERSUM_JOB_OUT', '/job/out')` runs everywhere;
 one that hard-codes `/job/out` dies on a native node (0.4.1).
+
+**Python packages on a native node (0.4.2).** The embedded Python ships nothing; on the first start after an
+install the node downloads the standard image's package set (numpy, pandas, pillow, requests, pypdf, openpyxl,
+python-docx — the same pinned versions) as wheels from PyPI into `<state>/pylib`, checks every file's sha256
+against `pylib-lock.json` shipped with the release, unpacks them with its own interpreter and puts the folder on
+PYTHONPATH for jobs (the sandbox reads it like the Python tree; it still has no network). The local page shows
+"preparing Python packages, 60 MB (n of 18)"; the heartbeat reports `python_packages: ok | pending | failed`
+and the hub offers python jobs to a native node only once it says ok.
 failure. Full threat model: [docs/threat-model.md](docs/threat-model.md).
 
 ## How money works

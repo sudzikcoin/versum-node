@@ -36,7 +36,7 @@ test('/job paths map into the attempt directory; dot-dot and other args stay as 
   assert.equal(mapJobPath('/job/../etc', d), '/job/../etc')
   assert.equal(mapJobPath('--out', d), '--out')
   const argv = nativeCommand(manifest(), { jobDir: d, python: '/py/bin/python3' })
-  assert.deepEqual(argv, ['/py/bin/python3', '-E', '-s', '-B', '-u', '-X', 'utf8', join(d, 'in', 'main.py'), '--out', join(d, 'out'), 'plain'])
+  assert.deepEqual(argv, ['/py/bin/python3', '-s', '-B', '-u', '-X', 'utf8', join(d, 'in', 'main.py'), '--out', join(d, 'out'), 'plain'])
 })
 
 test('the environment is ours: temp and home inside the job, buyer keys kept, buyer cannot override the base', () => {

@@ -48,7 +48,7 @@ jobs:
           node scripts/build-sea.mjs bundle
           node dist/sea/versum-node.cjs version
           mkdir -p dist/app
-          cp -R bin lib egress installer protocol docs probe packaging scripts test install.sh package.json sea-config.json README.md LICENSE dist/app/
+          cp -R bin lib egress installer protocol docs probe packaging scripts test install.sh package.json sea-config.json pylib-lock.json README.md LICENSE dist/app/
           printf '%s\n' "${{ steps.v.outputs.version }}" > dist/app/version.txt
           cp dist/sea/versum-node.cjs dist/app/
           (cd dist && tar -czf "versum-node-${{ steps.v.outputs.version }}.tar.gz" app)
@@ -101,7 +101,7 @@ jobs:
           node scripts/build-sea.mjs blob
           node scripts/build-sea.mjs inject (Get-Command node).Source ..\stage\versum-node.exe
           Pop-Location
-          Copy-Item app\packaging\windows\launch.vbs, app\version.txt, app\README.md, app\LICENSE -Destination stage\
+          Copy-Item app\packaging\windows\launch.vbs, app\version.txt, app\pylib-lock.json, app\README.md, app\LICENSE -Destination stage\
           Copy-Item app\probe -Destination stage\probe -Recurse
           $env:VERSUM_APP_ROOT = "$PWD\stage"
           & stage\versum-node.exe version
@@ -209,7 +209,7 @@ jobs:
           set -eu
           for a in arm64 x64; do
             mkdir -p "stage-$a/probe"; cp "bin/versum-node-$a" "stage-$a/versum-node"; cp -R "py-macos-$a/python" "stage-$a/python"; cp -R app/probe/. "stage-$a/probe/"
-            printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"
+            printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"; cp app/pylib-lock.json "stage-$a/pylib-lock.json"
             [ "$a" = arm64 ] && printf 'arm64\n' > "stage-$a/arch.txt" || printf 'x86_64\n' > "stage-$a/arch.txt"
           done
           # the arm64 build is THE target of this runner: the full probe must pass inside the real Seatbelt sandbox

@@ -16,6 +16,7 @@ cp -R "$ROOT/probe" "$APP/Contents/Resources/app/probe"
 cp "$ROOT/installer/install-macos.sh" "$APP/Contents/Resources/app/installer/"; chmod 755 "$APP/Contents/Resources/app/installer/install-macos.sh"
 cp "$ROOT/README.md" "$ROOT/LICENSE" "$APP/Contents/Resources/app/"
 printf '%s\n' "$VERSION" > "$APP/Contents/Resources/app/version.txt"
+[ -f "$ROOT/pylib-lock.json" ] && cp "$ROOT/pylib-lock.json" "$APP/Contents/Resources/app/pylib-lock.json"
 printf '%s\n' "$ARCH" > "$APP/Contents/Resources/app/arch.txt"
 cp "$ROOT/packaging/macos/launcher.sh" "$APP/Contents/MacOS/versum-node-installer"; chmod 755 "$APP/Contents/MacOS/versum-node-installer"
 cat > "$APP/Contents/Info.plist" <<PL

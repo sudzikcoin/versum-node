@@ -10,7 +10,7 @@ The header `x-versum-protocol: 2.0.0` names what the node speaks.
 | Call | Body | Meaning |
 |---|---|---|
 | `GET /me` | — | who am I; fails if the key is wrong |
-| `POST /me/heartbeat` | `{ status, interval_seconds, timezone, app, resources? }` | alive; `resources` = the scan below, stored as the latest report |
+| `POST /me/heartbeat` | `{ status, interval_seconds, timezone, app, platform, resources? }` | alive; `resources` = the scan below, stored as the latest report. 0.4.3: `platform` = `win32-x64` \| `darwin-arm64` \| `darwin-x64`; the answer carries `release: { version, published_at, asset: { url, sha256, size } }` — the newest node release and this platform's update bundle; the node updates itself from it (docs/self-update.md) |
 | `GET /me/node` | — | my offer as stored: enabled, price, share, windows, window_open_now, presence, reputation, earnings |
 | `PUT /me/node` | `{ resources?, share?, price_per_minute_usd?, mobility?, windows?, timezone?, enabled? }` | change any part of the offer; `enabled: true` needs a price and a scan |
 

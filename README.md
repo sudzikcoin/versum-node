@@ -117,6 +117,15 @@ PYTHONPATH for jobs (the sandbox reads it like the Python tree; it still has no 
 and the hub offers python jobs to a native node only once it says ok.
 failure. Full threat model: [docs/threat-model.md](docs/threat-model.md).
 
+**Updates itself (0.4.3).** Every heartbeat answer from the hub names the newest release and the sha256 of the update
+bundle for this computer's platform. When it is newer, the node downloads the bundle in the background, checks the hash,
+unpacks it, starts the new binary once to hear it say its version, stops taking new jobs, and — once nothing runs — swaps
+the program and restarts itself (Windows: through the Startup entry's own `launch.vbs`; macOS: launchd brings it back).
+The key, the settings, the name, the price and the Python packages stay where they are; `pylib-lock.json` changed →
+the packages are refreshed and `python_packages` reports `ok` again. The local page says "updating to v…" and then the
+version it runs. A download, hash or start failure changes nothing; a swap that does not come up three times rolls
+back to the previous program. Details in `docs/self-update.md`.
+
 ## How money works
 
 1. A buyer submits a job with resource requirements and a time limit, and pays an estimate into

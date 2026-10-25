@@ -7,7 +7,11 @@
 #   macos    SEA for arm64 and x64 (+ Rosetta smoke), embedded Python, .app + .dmg per arch; the arm64 .dmg is
 #            mounted under a keyed name and its installer app run → launchd agent → the same job round trip under
 #            sandbox-exec.
-#   release  attaches versum-node-setup.exe, Versum-Node-arm64.dmg, Versum-Node-x64.dmg and the source tarball.
+#   update   0.4.3: each runner also packs its stage directory as versum-node-update-<platform>.tar.gz (what an installed
+#            node downloads to update itself), builds a second copy as the NEXT version's release candidate, and after the
+#            job round trip proves the installed node updates itself to that rc (test/e2e/update-e2e.mjs) — the hub's e2e
+#            door pins the rc for this runner's executor only, the bundle is served from the runner's own loopback.
+#   release  attaches the installers, the three update bundles and the source tarball.
 # Secrets: VERSUM_E2E_NODE_KEY_WINDOWS / _MACOS (node keys of a dev account), VERSUM_E2E_SECRET (the hub's
 # x-test-proof-secret), VERSUM_E2E_BUYER (an +ll-e2e- buyer that does not own the nodes). Without them the
 # e2e steps are skipped and the artifacts are still built.
@@ -19,10 +23,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-# the e2e nodes pair with ONE key per OS: two runs at once would be one executor from two machines
+# the e2e nodes pair with ONE key per OS: two runs at once would be one executor from two machines — so runs of this
+# workflow queue behind each other whatever ref they are for (a tag push and the main push it rides on both run)
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-e2e
+  cancel-in-progress: false
 env:
   VERSUM_E2E_HUB: https://api.suverse.io/launchloop-dev
 jobs:
@@ -30,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      rc: ${{ steps.v.outputs.rc }}
       node: ${{ steps.v.outputs.node }}
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +47,9 @@ jobs:
           set -eu
           v="${GITHUB_REF_NAME}"; [ "${GITHUB_REF_TYPE}" = tag ] || v="v0.0.0-$(git rev-parse --short HEAD)"
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          # the release candidate the installed node must update itself to: the next patch, tagged rc.<run number>
+          rc=$(node -e 'const m=/^v?(\d+)\.(\d+)\.(\d+)/.exec(process.argv[1]); console.log(`${m[1]}.${m[2]}.${Number(m[3])+1}-rc.${process.argv[2]}`)' "$v" "${GITHUB_RUN_NUMBER}")
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
           echo "node=$(node -p 'require("./packaging/versions.json").node')" >> "$GITHUB_OUTPUT"
       - name: Bundle (esbuild → CommonJS, what the single executable carries)
         run: |
@@ -120,8 +129,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $f = Get-Item dist\versum-node-setup.exe; Write-Host ("installer: {0:N1} MB" -f ($f.Length / 1MB))
           if ($f.Length -gt 100MB) { throw "installer is over 100 MB" }
+      - name: Update bundle (what an installed node downloads) + the release candidate for the self-update test
+        shell: pwsh
+        run: |
+          tar -czf dist\versum-node-update-win32-x64.tar.gz -C stage .
+          if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+          Copy-Item stage stage-rc -Recurse
+          Set-Content -Path stage-rc\version.txt -Value "v${{ needs.source.outputs.rc }}" -NoNewline
+          $env:VERSUM_APP_ROOT = "$PWD\stage-rc"; $said = & stage-rc\versum-node.exe version; Write-Host "rc binary says: $said"
+          if ($said -ne "versum-node ${{ needs.source.outputs.rc }}") { throw "the rc copy does not report ${{ needs.source.outputs.rc }}" }
+          tar -czf dist\rc.tar.gz -C stage-rc .
+          if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+          Get-Item dist\versum-node-update-win32-x64.tar.gz, dist\rc.tar.gz | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with: { name: windows-installer, path: dist/versum-node-setup.exe }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-update, path: dist/versum-node-update-win32-x64.tar.gz }
       - name: END TO END — install the .exe as a user would, pair, lease, run in the AppContainer, complete
         if: env.VERSUM_E2E_NODE_KEY != ''
         shell: pwsh
@@ -148,6 +171,15 @@ jobs:
           $env:VERSUM_E2E_EXPECT_SANDBOX = 'appcontainer'
           $env:VERSUM_E2E_RAM_MB = '1024'; $env:VERSUM_E2E_MINUTES = '9'
           node app\test\e2e\hub-e2e.mjs
+      - name: SELF-UPDATE — the installed node updates itself to the rc built above, keeps its key/name/price, reports again
+        if: env.VERSUM_E2E_NODE_KEY != ''
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $env:VERSUM_E2E_RC_BUNDLE = "$PWD\dist\rc.tar.gz"; $env:VERSUM_E2E_RC_VERSION = "${{ needs.source.outputs.rc }}"; $env:VERSUM_E2E_PLATFORM = 'win32-x64'
+          node app\test\e2e\update-e2e.mjs
+          Get-ChildItem "$env:LOCALAPPDATA\versum-node" | Select-Object Name, Length | Format-Table
+          Get-Content "$env:LOCALAPPDATA\versum-node\version.txt"
       - name: Node log + uninstall
         if: always() && env.VERSUM_E2E_NODE_KEY != ''
         shell: pwsh
@@ -210,6 +242,7 @@ jobs:
           for a in arm64 x64; do
             mkdir -p "stage-$a/probe"; cp "bin/versum-node-$a" "stage-$a/versum-node"; cp -R "py-macos-$a/python" "stage-$a/python"; cp -R app/probe/. "stage-$a/probe/"
             printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"; cp app/pylib-lock.json "stage-$a/pylib-lock.json"
+            cp app/README.md app/LICENSE "stage-$a/"; mkdir -p "stage-$a/installer"; cp app/installer/install-macos.sh "stage-$a/installer/"
             [ "$a" = arm64 ] && printf 'arm64\n' > "stage-$a/arch.txt" || printf 'x86_64\n' > "stage-$a/arch.txt"
           done
           # the arm64 build is THE target of this runner: the full probe must pass inside the real Seatbelt sandbox
@@ -225,8 +258,21 @@ jobs:
           sh app/packaging/macos/build-app.sh "${{ needs.source.outputs.version }}" arm64 "$PWD/dist" bin/versum-node-arm64 py-macos-arm64/python
           sh app/packaging/macos/build-app.sh "${{ needs.source.outputs.version }}" x86_64 "$PWD/dist" bin/versum-node-x64 py-macos-x64/python
           for d in dist/Versum-Node-arm64.dmg dist/Versum-Node-x64.dmg; do s=$(stat -f %z "$d"); echo "$d: $((s / 1048576)) MB"; [ "$s" -le 104857600 ] || { echo "over 100 MB"; exit 1; }; done
+      - name: Update bundles per architecture + the arm64 release candidate for the self-update test
+        run: |
+          set -eu
+          export COPYFILE_DISABLE=1
+          tar -czf dist/versum-node-update-darwin-arm64.tar.gz -C stage-arm64 .
+          tar -czf dist/versum-node-update-darwin-x64.tar.gz -C stage-x64 .
+          cp -R stage-arm64 stage-rc; printf '%s\n' "v${{ needs.source.outputs.rc }}" > stage-rc/version.txt
+          said=$(VERSUM_APP_ROOT=$PWD/stage-rc stage-rc/versum-node version); echo "rc binary says: $said"
+          [ "$said" = "versum-node ${{ needs.source.outputs.rc }}" ] || { echo "the rc copy does not report ${{ needs.source.outputs.rc }}"; exit 1; }
+          tar -czf dist/rc.tar.gz -C stage-rc .
+          ls -la dist/*.tar.gz
       - uses: actions/upload-artifact@v4
         with: { name: macos-installers, path: dist/Versum-Node-*.dmg }
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-update, path: dist/versum-node-update-darwin-*.tar.gz }
       - name: END TO END — mount the keyed .dmg, run the installer app, pair, lease, run under sandbox-exec, complete
         if: env.VERSUM_E2E_NODE_KEY != ''
         timeout-minutes: 15
@@ -241,6 +287,14 @@ jobs:
           launchctl print "gui/$(id -u)/io.suverse.versum-node" | head -5
           export VERSUM_E2E_EXPECT_SANDBOX=seatbelt VERSUM_E2E_RAM_MB=1536 VERSUM_E2E_MINUTES=7
           node app/test/e2e/hub-e2e.mjs
+      - name: SELF-UPDATE — the installed node updates itself to the rc built above, keeps its key/name/price, reports again
+        if: env.VERSUM_E2E_NODE_KEY != ''
+        timeout-minutes: 15
+        run: |
+          set -eu
+          export VERSUM_E2E_RC_BUNDLE=$PWD/dist/rc.tar.gz VERSUM_E2E_RC_VERSION="${{ needs.source.outputs.rc }}" VERSUM_E2E_PLATFORM=darwin-arm64
+          node app/test/e2e/update-e2e.mjs
+          ls -la ~/.versum-node ~/.versum-node/app; cat ~/.versum-node/app/version.txt
       - name: Node log + uninstall
         if: always() && env.VERSUM_E2E_NODE_KEY != ''
         run: |
@@ -263,10 +317,14 @@ jobs:
             out/versum-node-setup.exe
             out/Versum-Node-arm64.dmg
             out/Versum-Node-x64.dmg
-            out/*.tar.gz
+            out/versum-node-update-win32-x64.tar.gz
+            out/versum-node-update-darwin-arm64.tar.gz
+            out/versum-node-update-darwin-x64.tar.gz
+            out/versum-node-v*.tar.gz
           body: |
             **One click, nothing else.** No Docker, no WSL, no terminal, no administrator, no reboot. Unsigned for now.
             - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node` (a single binary + an embedded Python), starts the node at sign-in from the Startup folder, opens http://127.0.0.1:3311/. Jobs run in a Windows AppContainer: no network, no access to your files, memory and CPU capped. Remove it from Settings → Apps.
             - **macOS** — `Versum-Node-arm64.dmg` (Apple silicon) or `Versum-Node-x64.dmg` (Intel): right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, registers a launchd agent, opens the node page. Jobs run under sandbox-exec: no network, read-only system, writable only inside the job's folder. Remove with `~/.versum-node/app/uninstall.sh`.
             - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh` (Podman/Docker containers; the only kind of node that runs container, GPU and network jobs).
             Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself. Each installer on this page was installed on a clean GitHub runner, paired to the dev hub, and completed a job inside its sandbox before being published.
+            **Updates itself** (0.4.3 and later): the node hears about every new release from the hub, downloads `versum-node-update-<platform>.tar.gz` from this page, checks its sha256, waits for the running job to finish, swaps the binary and restarts — key, settings and Python packages stay. The same pipeline proved it: the node installed on the runner updated itself to a release candidate built in the same run.

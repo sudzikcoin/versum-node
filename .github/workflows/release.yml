@@ -65,7 +65,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: app, path: app }
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ needs.source.outputs.node }} }
+        with:
+          node-version: ${{ needs.source.outputs.node }}
       - name: versum-sandbox.exe (C#, the compiler every Windows ships)
         shell: pwsh
         run: |
@@ -157,7 +158,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: app, path: app }
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ needs.source.outputs.node }} }
+        with:
+          node-version: ${{ needs.source.outputs.node }}
       - name: Embedded Python for both architectures (checksum pinned)
         run: |
           set -eu

@@ -135,11 +135,14 @@ jobs:
           # Start-Process -Wait would block until the node exits (never). Launch it, then poll for the files it lays down.
           Start-Process -FilePath $keyed -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$PWD\inno.log"
           $exe = "$env:LOCALAPPDATA\versum-node\versum-node.exe"
+          $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk"
           $deadline = (Get-Date).AddMinutes(4)
-          while (-not (Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep 3 }
+          while ((-not (Test-Path $exe) -or -not (Test-Path $lnk)) -and (Get-Date) -lt $deadline) { Start-Sleep 3 }   # [Files] then [Icons]: poll both, no race
           if (-not (Test-Path $exe)) { if (Test-Path "$PWD\inno.log") { Get-Content "$PWD\inno.log" | Select-Object -Last 40 }; throw "installer did not place versum-node.exe under %LOCALAPPDATA%" }
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk")) { throw "no Startup shortcut: the node would not start at sign-in" }
-          Write-Host "installed; the node is starting from the installer's launcher"
+          if (-not (Test-Path $lnk)) { throw "no Startup shortcut: the node would not start at sign-in" }
+          Write-Host "installed with a Startup shortcut; starting the node exactly as sign-in does (wscript launch.vbs)"
+          # CI cannot sign out and back in; run the launcher the Startup shortcut points at. launch.vbs is idempotent (it does not double-start).
+          Start-Process -FilePath "$env:WINDIR\System32\wscript.exe" -ArgumentList '//B', "$env:LOCALAPPDATA\versum-node\launch.vbs"
           Start-Sleep 10
           if (Test-Path "$env:LOCALAPPDATA\versum-node\home\state\launch.log") { Get-Content "$env:LOCALAPPDATA\versum-node\home\state\launch.log" }
           $env:VERSUM_E2E_EXPECT_SANDBOX = 'appcontainer'
@@ -150,8 +153,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "$env:LOCALAPPDATA\versum-node\home\state\node.log") { Get-Content "$env:LOCALAPPDATA\versum-node\home\state\node.log" | Select-Object -Last 80 }
+          taskkill /F /IM versum-node.exe 2>$null; Start-Sleep 3   # the node holds versum-node.exe; let go before removing the files
           $u = "$env:LOCALAPPDATA\versum-node\unins000.exe"
-          if (Test-Path $u) { Start-Process -FilePath $u -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait; Start-Sleep 3 }
+          if (Test-Path $u) { Start-Process -FilePath $u -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait; Start-Sleep 5 }
           if (Test-Path "$env:LOCALAPPDATA\versum-node\versum-node.exe") { throw "uninstall left versum-node.exe behind" }
           if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk") { throw "uninstall left the Startup shortcut" }
           Write-Host "uninstalled cleanly"

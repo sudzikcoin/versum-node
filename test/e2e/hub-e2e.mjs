@@ -12,7 +12,10 @@
  *   6. result.json says every door was shut (network, loopback, the users directory, writes outside the job)
  *
  * Env: VERSUM_E2E_HUB (https://api.suverse.io/launchloop-dev), VERSUM_E2E_SECRET (x-test-proof-secret),
- *      VERSUM_E2E_BUYER (an +ll-e2e- email that is NOT the node's owner), VERSUM_E2E_PRICE (default 0.0001).
+ *      VERSUM_E2E_BUYER (an +ll-e2e- email that is NOT the node's owner), VERSUM_E2E_PRICE (default 0.0001),
+ *      VERSUM_E2E_RAM_MB + VERSUM_E2E_MINUTES: the share and the job are shaped so that ONLY this node fits —
+ *      the Windows and macOS runners are online at the same time with the same price (windows: 1024 MB / 9 min,
+ *      macos: 1536 MB / 7 min: each job needs the other node's missing dimension).
  * Exit 0 only when everything above held. Prints every step; the node's log tail on failure.
  */
 import { readFileSync } from 'node:fs'
@@ -25,6 +28,8 @@ const BUYER = process.env.VERSUM_E2E_BUYER ?? ''
 const PRICE = Number(process.env.VERSUM_E2E_PRICE ?? '0.0001')
 const LOCAL = 'http://127.0.0.1:3311'
 const EXPECT = process.env.VERSUM_E2E_EXPECT_SANDBOX ?? ''   // appcontainer | seatbelt
+const RAM_MB = Number(process.env.VERSUM_E2E_RAM_MB ?? '1024')
+const MINUTES = Number(process.env.VERSUM_E2E_MINUTES ?? '5')
 const H = { 'content-type': 'application/json', 'x-versum-local': '1' }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const say = (m) => console.log(`[e2e ${new Date().toISOString().slice(11, 19)}] ${m}`)
@@ -52,16 +57,16 @@ async function main() {
   if (ready.scan.executor_kind !== 'script_native') await fail(`scan.executor_kind = ${ready.scan.executor_kind}`)
   say(`sandbox ${ready.runtime.sandbox} · python ${ready.runtime.version} · ${ready.scan.cpu_cores} cores · ${ready.scan.ram_mb} MB · ${ready.scan.disk_free_mb} MB free`)
   // 3 — the offer
-  const offer = await (await fetch(`${LOCAL}/api/offer`, { method: 'POST', headers: H, body: JSON.stringify({ share: { cpu_cores: 1, ram_mb: Math.min(2048, ready.scan.ram_mb ?? 2048), disk_mb: 2048, gpu: false, allow_network: false, max_parallel_jobs: 1, max_job_minutes: 60 }, price_per_minute_usd: PRICE, windows: 'always' }) })).json()
+  const offer = await (await fetch(`${LOCAL}/api/offer`, { method: 'POST', headers: H, body: JSON.stringify({ share: { cpu_cores: 1, ram_mb: RAM_MB, disk_mb: 2048, gpu: false, allow_network: false, max_parallel_jobs: 1, max_job_minutes: MINUTES }, price_per_minute_usd: PRICE, windows: 'always' }) })).json()
   if (!offer.saved || !offer.enabled) await fail(`offer not accepted: ${JSON.stringify(offer)}`)
   say(`offer saved · $${PRICE}/min · enabled`)
   const beat = await waitFor('first heartbeat', async () => { const s = await (await fetch(`${LOCAL}/api/state`)).json(); return s.presence?.last_heartbeat_ok ? s : null })
   say(`heartbeat ok at ${beat.presence.last_heartbeat_at}`)
   // 4 — the job on the hub
   const script = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'probe', 'sandbox_probe.py'), 'utf8')
-  const minutes = 5
+  const minutes = MINUTES
   const cap = Math.max(0.001, Math.round(PRICE * minutes * 1_000_000) / 1_000_000)
-  const created = await (await fetch(`${HUB}/test/e2e-job`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-proof-secret': SECRET }, body: JSON.stringify({ buyer_email: BUYER, title: `native sandbox e2e ${process.platform} ${new Date().toISOString()}`, script_name: 'sandbox_probe.py', script, max_price_usd: cap, time_limit_minutes: minutes, req: { cpu_cores: 1, ram_mb: 512, disk_mb: 512 }, args: { platform: process.platform, run: process.env.GITHUB_RUN_ID ?? 'local' } }) })).json()
+  const created = await (await fetch(`${HUB}/test/e2e-job`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-proof-secret': SECRET }, body: JSON.stringify({ buyer_email: BUYER, title: `native sandbox e2e ${process.platform} ${new Date().toISOString()}`, script_name: 'sandbox_probe.py', script, max_price_usd: cap, time_limit_minutes: minutes, req: { cpu_cores: 1, ram_mb: RAM_MB, disk_mb: 512 }, args: { platform: process.platform, run: process.env.GITHUB_RUN_ID ?? 'local' } }) })).json()
   if (!created.job_id) await fail(`job not created: ${JSON.stringify(created)}`)
   say(`job ${created.job_id} funded on the hub (cap $${cap}, ${minutes} min)`)
   // 5 — leased, run, completed

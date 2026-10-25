@@ -19,6 +19,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+# the e2e nodes pair with ONE key per OS: two runs at once would be one executor from two machines
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 env:
   VERSUM_E2E_HUB: https://api.suverse.io/launchloop-dev
 jobs:
@@ -134,6 +138,7 @@ jobs:
           Start-Sleep 8
           Get-Content "$env:LOCALAPPDATA\versum-node\home\state\launch.log"
           $env:VERSUM_E2E_EXPECT_SANDBOX = 'appcontainer'
+          $env:VERSUM_E2E_RAM_MB = '1024'; $env:VERSUM_E2E_MINUTES = '9'
           node app\test\e2e\hub-e2e.mjs
       - name: Node log + uninstall
         if: always() && env.VERSUM_E2E_NODE_KEY != ''
@@ -221,7 +226,7 @@ jobs:
           "/tmp/vn/Versum Node Installer.app/Contents/MacOS/versum-node-installer" || { cat ~/.versum-node/state/install.log; exit 1; }
           sed -E 's/llk_[0-9A-Za-z]{32}/llk_…/g' ~/.versum-node/state/install.log
           launchctl print "gui/$(id -u)/io.suverse.versum-node" | head -5
-          export VERSUM_E2E_EXPECT_SANDBOX=seatbelt
+          export VERSUM_E2E_EXPECT_SANDBOX=seatbelt VERSUM_E2E_RAM_MB=1536 VERSUM_E2E_MINUTES=7
           node app/test/e2e/hub-e2e.mjs
       - name: Node log + uninstall
         if: always() && env.VERSUM_E2E_NODE_KEY != ''

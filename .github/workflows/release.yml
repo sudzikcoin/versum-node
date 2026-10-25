@@ -180,7 +180,9 @@ jobs:
           mkdir -p bin
           for a in arm64 x64; do
             curl -fsSL -o "node-$a.tar.gz" "https://nodejs.org/dist/v$NODE_V/node-v$NODE_V-darwin-$a.tar.gz"
-            curl -fsSL "https://nodejs.org/dist/v$NODE_V/SHASUMS256.txt" | grep " node-v$NODE_V-darwin-$a.tar.gz\$" | sed "s| node-v$NODE_V-darwin-$a.tar.gz|  node-$a.tar.gz|" | shasum -a 256 -c -
+            want=$(curl -fsSL "https://nodejs.org/dist/v$NODE_V/SHASUMS256.txt" | grep " node-v$NODE_V-darwin-$a.tar.gz\$" | awk '{print $1}')
+            have=$(shasum -a 256 "node-$a.tar.gz" | awk '{print $1}')
+            [ -n "$want" ] && [ "$want" = "$have" ] || { echo "node-$a.tar.gz sha256 $have != $want"; exit 1; }
             mkdir -p "node-$a" && tar -xzf "node-$a.tar.gz" -C "node-$a" --strip-components=1
             (cd app && node scripts/build-sea.mjs inject "../node-$a/bin/node" "../bin/versum-node-$a")
           done

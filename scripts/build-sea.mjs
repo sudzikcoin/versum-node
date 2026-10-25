@@ -12,7 +12,7 @@
  * APP_ROOT to the executable's directory when it runs as a SEA (process.getBuiltinModule('node:sea')).
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, chmodSync, existsSync, statSync } from 'node:fs'
+import { copyFileSync, mkdirSync, chmodSync, existsSync, statSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,12 +20,24 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const dist = join(root, 'dist', 'sea')
 const [cmd, ...rest] = process.argv.slice(2)
 const run = (bin, args, opts = {}) => execFileSync(bin, args, { stdio: 'inherit', cwd: root, ...opts })
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+const versions = JSON.parse(readFileSync(join(root, 'packaging', 'versions.json'), 'utf8'))
+
+/** esbuild and postject are used through their JS API (a Windows shell mangles a banner with spaces); fetched on demand, never saved. */
+async function tool(name) {
+  try { return await import(name) } catch {}
+  console.log(`fetching ${name}@${versions[name]}`)
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-save', '--no-audit', '--no-fund', `${name}@${versions[name]}`], { shell: process.platform === 'win32' })
+  return import(name)
+}
 
 if (cmd === 'bundle') {
   mkdirSync(dist, { recursive: true })
-  run(npx, ['--yes', 'esbuild@0.24.2', 'bin/versum-node.mjs', '--bundle', '--platform=node', '--target=node20', '--format=cjs', `--outfile=${join(dist, 'versum-node.cjs')}`,
-    '--define:import.meta.url=__versum_meta_url', '--banner:js=const __versum_meta_url = require("node:url").pathToFileURL(__filename).href;', '--log-level=warning'], { shell: process.platform === 'win32' })
+  const esbuild = await tool('esbuild')
+  await esbuild.build({
+    entryPoints: [join(root, 'bin', 'versum-node.mjs')], bundle: true, platform: 'node', target: 'node20', format: 'cjs', outfile: join(dist, 'versum-node.cjs'), logLevel: 'warning',
+    define: { 'import.meta.url': '__versum_meta_url' },
+    banner: { js: 'const __versum_meta_url = require("node:url").pathToFileURL(__filename).href;' },
+  })
   console.log(`bundle: ${join(dist, 'versum-node.cjs')} (${statSync(join(dist, 'versum-node.cjs')).size} bytes)`)
 } else if (cmd === 'blob') {
   run(process.execPath, ['--experimental-sea-config', 'sea-config.json'])
@@ -39,9 +51,8 @@ if (cmd === 'bundle') {
   copyFileSync(src, out)
   if (process.platform !== 'win32') chmodSync(out, 0o755)
   if (process.platform === 'darwin') run('codesign', ['--remove-signature', out])
-  const args = ['--yes', 'postject@1.0.0-alpha.6', out, 'NODE_SEA_BLOB', blob, '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2']
-  if (process.platform === 'darwin') args.push('--macho-segment-name', 'NODE_SEA')
-  run(npx, args, { shell: process.platform === 'win32' })
+  const { inject } = await tool('postject')
+  await inject(out, 'NODE_SEA_BLOB', readFileSync(blob), { sentinelFuse: 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2', ...(process.platform === 'darwin' ? { machoSegmentName: 'NODE_SEA' } : {}) })
   if (process.platform === 'darwin') run('codesign', ['--sign', '-', out])
   console.log(`binary: ${out} (${statSync(out).size} bytes)`)
 } else {

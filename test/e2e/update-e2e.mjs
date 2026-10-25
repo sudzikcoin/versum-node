@@ -75,8 +75,9 @@ async function main() {
   say(`heartbeat ok at ${settled.presence.last_heartbeat_at} · ${settled.update.line}`)
   const py = await waitFor('python packages report ok again', async () => { const s = await localState(); if (s.pylib?.status === 'failed') throw new Error(s.pylib.line); return s.pylib?.status === 'ok' ? s : null }, { timeoutMs: 300_000, everyMs: 3000 })
   say(py.pylib.line)
-  const hubView = await waitFor('the hub records the new version', async () => { const r = await door('GET', null, `?executor_id=${executorId}`); return r.json?.node_version === RC && r.json?.app === `versum-node/${RC}` && r.json?.python_packages === 'ok' ? r.json : null }, { timeoutMs: 180_000, everyMs: 3000 })
-  say(`hub: node_version ${hubView.node_version} · app ${hubView.app} · python_packages ${hubView.python_packages} · last seen ${hubView.last_seen_at}`)
+  // 0.4.4: the sandbox GPU probe ran on first start and the hub heard its verdict — no_gpu on a runner without an NVIDIA driver
+  const hubView = await waitFor('the hub records the new version', async () => { const r = await door('GET', null, `?executor_id=${executorId}`); return r.json?.node_version === RC && r.json?.app === `versum-node/${RC}` && r.json?.python_packages === 'ok' && r.json?.gpu_probe === 'no_gpu' ? r.json : null }, { timeoutMs: 180_000, everyMs: 3000 })
+  say(`hub: node_version ${hubView.node_version} · app ${hubView.app} · python_packages ${hubView.python_packages} · gpu_probe ${hubView.gpu_probe} · last seen ${hubView.last_seen_at}`)
   // 6 — done
   await clearOverride()
   server.close()

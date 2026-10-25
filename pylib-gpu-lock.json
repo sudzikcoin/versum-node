@@ -1,0 +1,146 @@
+{
+ "lock_version": 1,
+ "python": "3.12",
+ "source": "scripts/pylib-gpu-lock.mjs — PyPI + download.pytorch.org, resolved 2026-10-25",
+ "sets": {
+  "cu128": {
+   "cuda_major": 12,
+   "min_driver_cuda": "12.8",
+   "packages": [
+    "torch==2.9.1+cu128",
+    "filelock==4.2.4",
+    "typing-extensions==4.16.0",
+    "setuptools==84.2.1",
+    "sympy==1.14.0",
+    "mpmath==1.4.1",
+    "networkx==3.7",
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.4",
+    "fsspec==2026.9.0",
+    "cupy-cuda12x==14.2.0",
+    "cuda-pathfinder==1.8.4",
+    "numba==0.68.0",
+    "llvmlite==0.50.0"
+   ],
+   "bytes_total": 3016036925
+  }
+ },
+ "platforms": {
+  "win32-x64": {
+   "cu128": [
+    {
+     "name": "torch",
+     "version": "2.9.1+cu128",
+     "file": "torch-2.9.1+cu128-cp312-cp312-win_amd64.whl",
+     "url": "https://download-r2.pytorch.org/whl/cu128/torch-2.9.1+cu128-cp312-cp312-win_amd64.whl",
+     "sha256": "3a01f0b64c10a82d444d9fd06b3e8c567b1158b76b2764b8f51bfd8f535064b0",
+     "size": 2862033275
+    },
+    {
+     "name": "filelock",
+     "version": "4.2.4",
+     "file": "filelock-4.2.4-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl",
+     "sha256": "301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e",
+     "size": 162475
+    },
+    {
+     "name": "typing-extensions",
+     "version": "4.16.0",
+     "file": "typing_extensions-4.16.0-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+     "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+     "size": 45571
+    },
+    {
+     "name": "setuptools",
+     "version": "84.2.1",
+     "file": "setuptools-84.2.1-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl",
+     "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2",
+     "size": 876263
+    },
+    {
+     "name": "sympy",
+     "version": "1.14.0",
+     "file": "sympy-1.14.0-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl",
+     "sha256": "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5",
+     "size": 6299353
+    },
+    {
+     "name": "mpmath",
+     "version": "1.4.1",
+     "file": "mpmath-1.4.1-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/13/f2/abeec3db71d221ccd3cd89d206be1fabf5a3ee7178862f5fba23a59607e0/mpmath-1.4.1-py3-none-any.whl",
+     "sha256": "dc4f0ea2304480d4a9a48a94c1020571558ade522b44a6912efac63a586e140f",
+     "size": 567787
+    },
+    {
+     "name": "networkx",
+     "version": "3.7",
+     "file": "networkx-3.7-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/7e/cd/fe58041e9011f307c490e3e17dd48cc516448f7c698a3f2d9d9d65d7e6a8/networkx-3.7-py3-none-any.whl",
+     "sha256": "e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0",
+     "size": 2142205
+    },
+    {
+     "name": "Jinja2",
+     "version": "3.1.6",
+     "file": "jinja2-3.1.6-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+     "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+     "size": 134899
+    },
+    {
+     "name": "MarkupSafe",
+     "version": "3.0.4",
+     "file": "markupsafe-3.0.4-cp312-cp312-win_amd64.whl",
+     "url": "https://files.pythonhosted.org/packages/3f/bf/62495e180b7000aaf30000fff849e933f74264638057176cf46852500adc/markupsafe-3.0.4-cp312-cp312-win_amd64.whl",
+     "sha256": "11935df9bf455ed0c04eb87bcd720f02b1fe5e02128a9430f23aed6f93336fc7",
+     "size": 14303
+    },
+    {
+     "name": "fsspec",
+     "version": "2026.9.0",
+     "file": "fsspec-2026.9.0-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl",
+     "sha256": "8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f",
+     "size": 221738
+    },
+    {
+     "name": "cupy-cuda12x",
+     "version": "14.2.0",
+     "file": "cupy_cuda12x-14.2.0-cp312-cp312-win_amd64.whl",
+     "url": "https://files.pythonhosted.org/packages/e9/18/ddea819204701024bef7fa748730702245d803847c841b737723b94fd091/cupy_cuda12x-14.2.0-cp312-cp312-win_amd64.whl",
+     "sha256": "c9571d3b5f2e65758137e210f7fb3c3b34767f0af6b6ca04035a244b6141ee12",
+     "size": 98780018
+    },
+    {
+     "name": "cuda-pathfinder",
+     "version": "1.8.4",
+     "file": "cuda_pathfinder-1.8.4-py3-none-any.whl",
+     "url": "https://files.pythonhosted.org/packages/8e/93/f0904fa7d954ecc4c0db17c8d63d185d442dd59fc6757f1d1f448c59c256/cuda_pathfinder-1.8.4-py3-none-any.whl",
+     "sha256": "85a4e708c725d603f576042ef32781a3d1737c51e84c35fe361d2680191af65a",
+     "size": 62594
+    },
+    {
+     "name": "numba",
+     "version": "0.68.0",
+     "file": "numba-0.68.0-cp312-cp312-win_amd64.whl",
+     "url": "https://files.pythonhosted.org/packages/7e/2b/1b1f8b118cec28513665d8a53ff4f037d6c05720bd9e6f32f947c93c367f/numba-0.68.0-cp312-cp312-win_amd64.whl",
+     "sha256": "530961dc7e41ee358eca2b828baf7b645ce6fa466d778bb9dc73855dd103c4f7",
+     "size": 2830891
+    },
+    {
+     "name": "llvmlite",
+     "version": "0.50.0",
+     "file": "llvmlite-0.50.0-cp312-cp312-win_amd64.whl",
+     "url": "https://files.pythonhosted.org/packages/64/70/f395702c20b514363061055b5bdebe3513e544139e6d412a5c86e8ea0b30/llvmlite-0.50.0-cp312-cp312-win_amd64.whl",
+     "sha256": "c20595cc3a76e3c85140fdafbf9246c732ddf8e0e646ba2f4e4881f87567300d",
+     "size": 41865553
+    }
+   ]
+  }
+ }
+}

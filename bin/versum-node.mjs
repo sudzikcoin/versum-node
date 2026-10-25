@@ -16,10 +16,12 @@
  *   versum-node run-local <manifest.json>  run a manifest without the hub (inputs by `path`); outputs stay in jobs/<id>/out
  *   versum-node prune                      remove leftover job containers and unused images
  *   versum-node sandbox-check              run the probe script in this machine's sandbox and say what it could NOT do
+ *   versum-node gpu-check [--force]        0.4.4: does CUDA work inside the sandbox here? exit 0 works · 1 blocked · 2 no GPU
  *   versum-node version
  */
 import { join } from 'node:path'
-import { loadConfig, saveConfig, redactConfig, ensureHome, nodeHome, jobsDir, offerPatchFromArgs, DEFAULT_HUB } from '../lib/config.mjs'
+import { loadConfig, saveConfig, redactConfig, ensureHome, nodeHome, jobsDir, stateDir, offerPatchFromArgs, DEFAULT_HUB } from '../lib/config.mjs'
+import { existsSync, readFileSync } from 'node:fs'
 import { detectRuntime, reapContainers, makeExecutor, describeRuntime } from '../lib/runtime.mjs'
 import { probeVerdict } from '../lib/native.mjs'
 import { scan, renderScan, NODE_VERSION } from '../lib/scan.mjs'
@@ -136,6 +138,31 @@ async function main() {
       try { (await import('node:fs')).rmSync(r.job_dir, { recursive: true, force: true }) } catch {}
       process.exitCode = r.outcome === 'succeeded' && v.ok ? 0 : 1; return
     }
+    case 'gpu-check': {
+      // 0.4.4: the GPU probe by hand — the same two runs the node does on first start (lib/gpu-probe.mjs), never from the cache.
+      // --force runs the probe even without an NVIDIA GPU (what CI does: the sandboxed interpreter must still write its result).
+      const cfg = loadConfig(home); ensureHome(home)
+      const rtd = await detectRuntime(cfg.runtime, { allowRootful: cfg.allow_rootful === true, appRoot: APP_ROOT })
+      if (!rtd.ok) { for (const r of rtd.reasons) log(r); throw new Error('no usable runtime') }
+      if (rtd.kind !== 'native') throw new Error('gpu-check is for the built-in sandbox (Windows / macOS); a container node uses the nvidia container toolkit')
+      const { runGpuProbe } = await import('../lib/gpu-probe.mjs')
+      const { PYLIB_GPU_DIR, MARKER } = await import('../lib/pylib-gpu.mjs')
+      const res = await scan({ jobsDir: jobsDir(home), runtime: rtd })
+      let gpu = res.gpu
+      out(`gpu      ${gpu?.model ? `${gpu.model} · ${gpu.vram_mb ?? '?'} MB · CUDA ${gpu.cuda ?? 'none'} · driver ${gpu.driver ?? '?'}` : 'none'}`)
+      if (flag('force') !== null && !gpu?.cuda) gpu = { ...gpu, vendor: 'nvidia', model: gpu?.model ?? '(no GPU — forced run)', cuda: gpu?.cuda ?? '0.0' }
+      const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log })
+      await exec.ensureGrants()
+      // the torch stage when the GPU set is already unpacked here (the marker lib/pylib-gpu.mjs writes), the driver stage otherwise
+      const gpuDir = join(stateDir(home), PYLIB_GPU_DIR)
+      let stamp = null; try { stamp = JSON.parse(readFileSync(join(gpuDir, MARKER), 'utf8')).stamp } catch {}
+      const stage = stamp ? 'torch' : 'driver'
+      const pylibDir = join(stateDir(home), 'pylib')
+      const r = await runGpuProbe({ home, appRoot: APP_ROOT, stateDir: stateDir(home), gpu, stage, exec, pythonExe: rtd.python.exe, pythonDir: rtd.python.dir, pylibDir: existsSync(pylibDir) ? pylibDir : null, gpuDir: stamp ? gpuDir : null, stamp, log, force: true, nodeVersion: NODE_VERSION })
+      out({ stage: r.stage, verdict: r.verdict, detail: r.detail, sandbox_exit: r.sandbox_exit ?? null, bare: r.bare && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.bare[k] ? { ok: r.bare[k].ok, error: r.bare[k].error ?? null } : null])), sandboxed: r.sandboxed && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.sandboxed[k] ? { ok: r.sandboxed[k].ok, error: r.sandboxed[k].error ?? null } : null])), report: join(stateDir(home), 'gpu-probe.json') })
+      if (flag('force') !== null && !r.sandboxed) { out('FAIL: the sandboxed interpreter wrote no result — the probe did not run inside the sandbox at all'); process.exitCode = 1; return }
+      process.exitCode = r.verdict === 'appcontainer_ok' ? 0 : r.verdict === 'no_gpu' ? 2 : 1; return
+    }
     case 'prune': {
       const c1 = loadConfig(home)
       const rtd = await detectRuntime(c1.runtime, { allowRootful: c1.allow_rootful === true, appRoot: APP_ROOT })
@@ -149,7 +176,7 @@ async function main() {
       out(`versum-node — share your computer's spare compute by the minute
 
   scan · doctor · pair <key> · offer [--cpu= --ram-gb= --disk-gb= --gpu= --parallel= --max-job-minutes= --network= --price= --mobility= --windows=]
-  on · off · status · start · once · open · run-local <manifest.json> · sandbox-check · prune · version
+  on · off · status · start · once · open · run-local <manifest.json> · sandbox-check · gpu-check · prune · version
 
 After install nothing here is needed: the local page http://127.0.0.1:3311/ pairs, sets the share and the price, pauses, shows earnings and the log.
 

@@ -57,7 +57,7 @@ jobs:
           node scripts/build-sea.mjs bundle
           node dist/sea/versum-node.cjs version
           mkdir -p dist/app
-          cp -R bin lib egress installer protocol docs probe packaging scripts test install.sh package.json sea-config.json pylib-lock.json README.md LICENSE dist/app/
+          cp -R bin lib egress installer protocol docs probe packaging scripts test install.sh package.json sea-config.json pylib-lock.json pylib-gpu-lock.json README.md LICENSE dist/app/
           printf '%s\n' "${{ steps.v.outputs.version }}" > dist/app/version.txt
           cp dist/sea/versum-node.cjs dist/app/
           (cd dist && tar -czf "versum-node-${{ steps.v.outputs.version }}.tar.gz" app)
@@ -110,14 +110,18 @@ jobs:
           node scripts/build-sea.mjs blob
           node scripts/build-sea.mjs inject (Get-Command node).Source ..\stage\versum-node.exe
           Pop-Location
-          Copy-Item app\packaging\windows\launch.vbs, app\version.txt, app\pylib-lock.json, app\README.md, app\LICENSE -Destination stage\
+          Copy-Item app\packaging\windows\launch.vbs, app\version.txt, app\pylib-lock.json, app\pylib-gpu-lock.json, app\README.md, app\LICENSE -Destination stage\
           Copy-Item app\probe -Destination stage\probe -Recurse
           $env:VERSUM_APP_ROOT = "$PWD\stage"
           & stage\versum-node.exe version
-          & stage\versum-node.exe scan
+          $scan = & stage\versum-node.exe scan | Out-String; Write-Host $scan
+          if ($scan -notmatch 'GPU\s+none') { throw "the scan must say GPU none on this runner" }   # 0.4.4: no NVIDIA driver here, so detection answers none and nothing is offered
           $env:VERSUM_NODE_HOME = "$PWD\home-check"
           & stage\versum-node.exe sandbox-check
           if ($LASTEXITCODE -ne 0) { throw "sandbox-check failed" }
+          # 0.4.4: the GPU probe through the real AppContainer with no GPU: the sandboxed interpreter must still write its result and the verdict is no_gpu (exit 2)
+          & stage\versum-node.exe gpu-check --force
+          if ($LASTEXITCODE -ne 2) { throw "gpu-check --force must exit 2 (no GPU) on this runner, got $LASTEXITCODE" }
       - name: Inno Setup → versum-node-setup.exe
         shell: pwsh
         run: |
@@ -241,7 +245,7 @@ jobs:
           set -eu
           for a in arm64 x64; do
             mkdir -p "stage-$a/probe"; cp "bin/versum-node-$a" "stage-$a/versum-node"; cp -R "py-macos-$a/python" "stage-$a/python"; cp -R app/probe/. "stage-$a/probe/"
-            printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"; cp app/pylib-lock.json "stage-$a/pylib-lock.json"
+            printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"; cp app/pylib-lock.json app/pylib-gpu-lock.json "stage-$a/"
             cp app/README.md app/LICENSE "stage-$a/"; mkdir -p "stage-$a/installer"; cp app/installer/install-macos.sh "stage-$a/installer/"
             [ "$a" = arm64 ] && printf 'arm64\n' > "stage-$a/arch.txt" || printf 'x86_64\n' > "stage-$a/arch.txt"
           done
@@ -327,4 +331,5 @@ jobs:
             - **macOS** — `Versum-Node-arm64.dmg` (Apple silicon) or `Versum-Node-x64.dmg` (Intel): right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, registers a launchd agent, opens the node page. Jobs run under sandbox-exec: no network, read-only system, writable only inside the job's folder. Remove with `~/.versum-node/app/uninstall.sh`.
             - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh` (Podman/Docker containers; the only kind of node that runs container, GPU and network jobs).
             Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself. Each installer on this page was installed on a clean GitHub runner, paired to the dev hub, and completed a job inside its sandbox before being published.
+            **GPU** (0.4.4, Windows + NVIDIA): the node names the GPU and its driver's CUDA version, proves on first start that CUDA works inside the AppContainer, and "share the GPU" on the node page fetches torch 2.9 (CUDA 12.8), cupy and numba (2.8 GB, once) — then GPU jobs are leased at the node's GPU price (default 5× the CPU price).
             **Updates itself** (0.4.3 and later): the node hears about every new release from the hub, downloads `versum-node-update-<platform>.tar.gz` from this page, checks its sha256, waits for the running job to finish, swaps the binary and restarts — key, settings and Python packages stay. The same pipeline proved it: the node installed on the runner updated itself to a release candidate built in the same run.

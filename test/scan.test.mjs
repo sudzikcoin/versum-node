@@ -30,3 +30,9 @@ test('cpu.stat and cgroup candidates', () => {
   assert.deepEqual(cpuStatCandidates('docker', 'abc'), ['/sys/fs/cgroup/system.slice/docker-abc.scope/cpu.stat', '/sys/fs/cgroup/docker/abc/cpu.stat'])
   assert.equal(cpuStatCandidates('podman', 'abc', '/user.slice/x/libpod-abc.scope')[0], '/sys/fs/cgroup/user.slice/x/libpod-abc.scope/cpu.stat')
 })
+
+test('the scan carries the 0.4.4 gpu block beside the flat fields (none on this machine)', async () => {
+  const { scan } = await import('../lib/scan.mjs')
+  const r = await scan({ jobsDir: null })
+  assert.equal(typeof r.gpu, 'object'); assert.equal(r.gpu.count, r.gpu_count); assert.ok('cuda' in r.gpu)
+})

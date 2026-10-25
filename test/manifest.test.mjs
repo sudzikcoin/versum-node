@@ -70,3 +70,9 @@ test('fitsShare refuses what the owner did not share', () => {
   const n = validateManifest({ ...good(), limits: { ...good().limits, network: true } })
   assert.match(fitsShare(n, { share: { cpu_cores: null, ram_mb: null, disk_mb: null, gpu: false, allow_network: false }, found }), /network/)
 })
+
+test('inputs: sha256 null (the hub has no digest) is accepted; a wrong digest is refused', () => {
+  const ok = validateManifest({ ...good(), inputs: [{ name: 'run.py', url: 'https://hub.example/signed/run.py', size_bytes: 120, sha256: null }] })
+  assert.equal(ok.inputs[0].sha256, null)
+  rejects({ inputs: [{ name: 'run.py', url: 'https://hub.example/signed/run.py', size_bytes: 120, sha256: 'nope' }] }, /sha256 malformed/)
+})

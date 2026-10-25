@@ -9,11 +9,14 @@ RUN pip install --no-cache-dir \
       pandas==2.2.3 \
       pillow==11.0.0 \
       requests==2.32.3 \
-    && python -c "import numpy, pandas, PIL, requests; print(numpy.__version__, pandas.__version__, PIL.__version__, requests.__version__)" \
+      pypdf==5.1.0 \
+      openpyxl==3.1.5 \
+      python-docx==1.1.2 \
+    && python -c "import numpy, pandas, PIL, requests, pypdf, openpyxl, docx; print(numpy.__version__, pandas.__version__, PIL.__version__, requests.__version__, pypdf.__version__, openpyxl.__version__, docx.__version__)" \
     && rm -rf /root/.cache
 # the node runs the container with its own uid; /job is the only mount, nothing here is writable but /tmp
 WORKDIR /job
 LABEL org.opencontainers.image.source="https://github.com/sudzikcoin/versum-node" \
-      org.opencontainers.image.description="Versum standard Python 3.12 image: numpy, pandas, pillow, requests" \
+      org.opencontainers.image.description="Versum standard Python 3.12 image: numpy, pandas, pillow, requests, pypdf, openpyxl, python-docx" \
       org.opencontainers.image.licenses="Apache-2.0"
 CMD ["python", "-c", "print('versum-python ready')"]

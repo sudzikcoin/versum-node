@@ -1,18 +1,24 @@
 {
   "name": "versum-node",
-  "version": "0.3.1",
-  "description": "Share your computer's spare compute with the Versum network: scan the machine, choose what to share and a price per minute, run buyers' jobs in a wiped container, get paid in USDC on Base.",
+  "version": "0.4.0",
+  "description": "Share your computer's spare compute with the Versum network: scan the machine, choose what to share and a price per minute, run buyers' jobs in a sandbox (a wiped container on Linux; the OS sandbox with an embedded Python on Windows and macOS), get paid in USDC on Base.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "https://github.com/sudzikcoin/versum-node.git" },
   "homepage": "https://versum.suverse.io",
   "bin": { "versum-node": "bin/versum-node.mjs" },
-  "files": ["bin", "lib", "egress", "installer", "protocol", "docs", "README.md", "LICENSE"],
+  "files": ["bin", "lib", "egress", "installer", "protocol", "docs", "probe", "README.md", "LICENSE"],
   "engines": { "node": ">=20" },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "scan": "node bin/versum-node.mjs scan",
-    "start": "node bin/versum-node.mjs start"
+    "start": "node bin/versum-node.mjs start",
+    "bundle": "node scripts/build-sea.mjs bundle",
+    "sea:blob": "node scripts/build-sea.mjs blob"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "esbuild": "0.24.2",
+    "postject": "1.0.0-alpha.6"
+  }
 }

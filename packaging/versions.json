@@ -1,0 +1,15 @@
+{
+  "node": "22.23.4",
+  "python": {
+    "tag": "20261021",
+    "version": "3.12.15",
+    "assets": {
+      "windows-x64": { "file": "cpython-3.12.15+20261021-x86_64-pc-windows-msvc-install_only_stripped.tar.gz", "sha256": "aac5d331fc3307343f95928fdbea4583f0d53973d08c7e1d081884fbd229a0e1" },
+      "macos-arm64": { "file": "cpython-3.12.15+20261021-aarch64-apple-darwin-install_only_stripped.tar.gz", "sha256": "7b8d00b751db21cea87dc551a8f8165147c5fbc5251d5537d7e5497dde00a219" },
+      "macos-x64": { "file": "cpython-3.12.15+20261021-x86_64-apple-darwin-install_only_stripped.tar.gz", "sha256": "f12e0504397683d6be0745ffd4c39ef45a455cec169adf35c628840d06133773" }
+    },
+    "base_url": "https://github.com/astral-sh/python-build-standalone/releases/download"
+  },
+  "postject": "1.0.0-alpha.6",
+  "esbuild": "0.24.2"
+}

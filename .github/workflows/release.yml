@@ -1,35 +1,53 @@
-# Installers for people who will not open a terminal (stage 7, 2026-10-25). On a tag v* this builds, from the
-# same code the one-liner installs:
-#   versum-node-setup.exe   Windows — Inno Setup around install.ps1 (WSL2 + Docker Desktop + scheduled task)
-#   Versum-Node.dmg         macOS   — "Versum Node Installer.app" around installer/install-macos.sh (launchd agent)
-#   versum-node-<ver>.tar.gz  the program itself, for install.sh / anyone
-# and attaches them to the GitHub Release of that tag. UNSIGNED: the site documents SmartScreen "More info →
-# Run anyway" and macOS right-click → Open. The hub serves the same files renamed with the pairing key inside
-# the file name (versum-node-setup-llk_….exe); the installers read the key from their own name.
+# v0.4.0 — one-click installers around a single binary, tested end to end on the real runners.
+#   source   tests; esbuild bundle (CJS) for the single executable
+#   windows  versum-sandbox.exe (in-box csc), embedded Python, Node SEA → Inno .exe; then INSTALLS that .exe
+#            silently on the runner (no Docker, no WSL used), pairs to the dev hub through the key in the file
+#            name, sets an offer, and a python job created on the hub is leased, run inside an AppContainer and
+#            completed — the probe proves no network / no user files. Uninstalls at the end.
+#   macos    SEA for arm64 and x64 (+ Rosetta smoke), embedded Python, .app + .dmg per arch; the arm64 .dmg is
+#            mounted under a keyed name and its installer app run → launchd agent → the same job round trip under
+#            sandbox-exec.
+#   release  attaches versum-node-setup.exe, Versum-Node-arm64.dmg, Versum-Node-x64.dmg and the source tarball.
+# Secrets: VERSUM_E2E_NODE_KEY_WINDOWS / _MACOS (node keys of a dev account), VERSUM_E2E_SECRET (the hub's
+# x-test-proof-secret), VERSUM_E2E_BUYER (an +ll-e2e- buyer that does not own the nodes). Without them the
+# e2e steps are skipped and the artifacts are still built.
 name: release
 on:
   push:
     tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: write
+env:
+  VERSUM_E2E_HUB: https://api.suverse.io/launchloop-dev
 jobs:
   source:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      node: ${{ steps.v.outputs.node }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - run: npm test
-      - name: Stage the program (what every installer carries)
+      - id: v
         run: |
           set -eu
           v="${GITHUB_REF_NAME}"; [ "${GITHUB_REF_TYPE}" = tag ] || v="v0.0.0-$(git rev-parse --short HEAD)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "node=$(node -p 'require("./packaging/versions.json").node')" >> "$GITHUB_OUTPUT"
+      - name: Bundle (esbuild → CommonJS, what the single executable carries)
+        run: |
+          set -eu
+          node scripts/build-sea.mjs bundle
+          node dist/sea/versum-node.cjs version
           mkdir -p dist/app
-          cp -R bin lib egress installer protocol docs packaging install.sh install.ps1 package.json README.md LICENSE dist/app/
-          printf '%s\n' "$v" > dist/app/version.txt
-          (cd dist && tar -czf "versum-node-${v#v}.tar.gz" app)
-          echo "VERSION=$v" >> "$GITHUB_ENV"
+          cp -R bin lib egress installer protocol docs probe packaging scripts install.sh package.json sea-config.json README.md LICENSE dist/app/
+          printf '%s\n' "${{ steps.v.outputs.version }}" > dist/app/version.txt
+          cp dist/sea/versum-node.cjs dist/app/
+          (cd dist && tar -czf "versum-node-${{ steps.v.outputs.version }}.tar.gz" app)
       - uses: actions/upload-artifact@v4
         with: { name: app, path: dist/app, include-hidden-files: true }
       - uses: actions/upload-artifact@v4
@@ -38,58 +56,176 @@ jobs:
   windows:
     needs: source
     runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      VERSUM_E2E_NODE_KEY: ${{ secrets.VERSUM_E2E_NODE_KEY_WINDOWS }}
+      VERSUM_E2E_SECRET: ${{ secrets.VERSUM_E2E_SECRET }}
+      VERSUM_E2E_BUYER: ${{ secrets.VERSUM_E2E_BUYER }}
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: app, path: dist/win/app }
-      - name: Dry run under Windows PowerShell 5.1 (the shell the .exe really uses)
-        # The installed layout: {app}\setup.cmd, {app}\setup.ps1, {app}\app\install.ps1. A spaced path, a
-        # non-default hub and a browser's " (1)" suffix in the installer name. Must end with "DRY RUN OK" in the log.
-        shell: cmd
-        timeout-minutes: 10
-        env: { CI: '1' }
+        with: { name: app, path: app }
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ needs.source.outputs.node }} }
+      - name: versum-sandbox.exe (C#, the compiler every Windows ships)
+        shell: pwsh
         run: |
-          mkdir dist\stage\app
-          xcopy /E /I /Q dist\win\app dist\stage\app >nul
-          copy dist\win\app\packaging\windows\setup.cmd dist\stage\ >nul
-          copy dist\win\app\packaging\windows\setup.ps1 dist\stage\ >nul
-          call dist\stage\setup.cmd -DryRun -Source "C:\Users\Some One\Downloads\versum-node-setup-llk_abcdefghijklmnopqrstuvwxyz012345-hub-api.suverse.io~launchloop-dev (1).exe"
-          if errorlevel 1 exit /b 1
-          type "%LOCALAPPDATA%\versum-node\install.log"
-          findstr /C:"DRY RUN OK" "%LOCALAPPDATA%\versum-node\install.log" >nul || exit /b 1
-          findstr /C:"hub      https://api.suverse.io/launchloop-dev" "%LOCALAPPDATA%\versum-node\install.log" >nul || exit /b 1
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { throw "csc.exe not found at $csc" }
+          New-Item -ItemType Directory -Force stage | Out-Null
+          & $csc /nologo /optimize+ /target:exe /platform:x64 /out:stage\versum-sandbox.exe app\packaging\windows\sandbox\Sandbox.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $p = & stage\versum-sandbox.exe probe; Write-Host "probe: $p"; if ($p -notmatch '"appcontainer":true') { throw "AppContainer probe failed: $p" }
+          Get-Item stage\versum-sandbox.exe | Format-List Name, Length
+      - name: Embedded Python (python-build-standalone, checksum pinned)
+        shell: pwsh
+        run: |
+          $v = Get-Content app\packaging\versions.json | ConvertFrom-Json
+          $a = $v.python.assets.'windows-x64'
+          $url = "$($v.python.base_url)/$($v.python.tag)/$($a.file)"
+          Invoke-WebRequest -Uri $url -OutFile py.tar.gz
+          $h = (Get-FileHash py.tar.gz -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $a.sha256) { throw "python sha256 $h != $($a.sha256)" }
+          tar -xzf py.tar.gz -C stage
+          & stage\python\python.exe -c "import sys; print(sys.version)"
+      - name: Single executable (Node SEA)
+        shell: pwsh
+        run: |
+          Copy-Item app\dist\sea\versum-node.cjs -Destination app\versum-node.cjs -ErrorAction SilentlyContinue
+          Push-Location app
+          node scripts/build-sea.mjs bundle
+          node scripts/build-sea.mjs blob
+          node scripts/build-sea.mjs inject (Get-Command node).Source ..\stage\versum-node.exe
+          Pop-Location
+          Copy-Item app\packaging\windows\launch.vbs, app\version.txt, app\README.md, app\LICENSE -Destination stage\
+          Copy-Item app\probe -Destination stage\probe -Recurse
+          $env:VERSUM_APP_ROOT = "$PWD\stage"
+          & stage\versum-node.exe version
+          & stage\versum-node.exe scan
+          $env:VERSUM_NODE_HOME = "$PWD\home-check"
+          & stage\versum-node.exe sandbox-check
+          if ($LASTEXITCODE -ne 0) { throw "sandbox-check failed" }
       - name: Inno Setup → versum-node-setup.exe
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
-          $v = (Get-Content dist/win/app/version.txt | Select-Object -First 1).TrimStart('v')
-          & $iscc "/DAppVersion=$v" "/DSourceDir=$PWD\dist\win\app" "/DOutDir=$PWD\dist" "dist\win\app\packaging\windows\versum-node.iss"
+          $ver = "${{ needs.source.outputs.version }}".TrimStart('v')
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & $iscc "/DAppVersion=$ver" "/DSourceDir=$PWD\stage" "/DOutDir=$PWD\dist" "app\packaging\windows\versum-node.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-Item dist/versum-node-setup.exe | Format-List Name, Length
+          $f = Get-Item dist\versum-node-setup.exe; Write-Host ("installer: {0:N1} MB" -f ($f.Length / 1MB))
+          if ($f.Length -gt 100MB) { throw "installer is over 100 MB" }
       - uses: actions/upload-artifact@v4
         with: { name: windows-installer, path: dist/versum-node-setup.exe }
+      - name: END TO END — install the .exe as a user would, pair, lease, run in the AppContainer, complete
+        if: env.VERSUM_E2E_NODE_KEY != ''
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $env:VERSUM_NODE_HEARTBEAT_SECONDS = '5'
+          $keyed = "$PWD\dist\versum-node-setup-$($env:VERSUM_E2E_NODE_KEY)-hub-api.suverse.io~launchloop-dev.exe"
+          Copy-Item dist\versum-node-setup.exe $keyed
+          Write-Host "installing $(Split-Path $keyed -Leaf | ForEach-Object { $_ -replace 'llk_[0-9A-Za-z]{32}', 'llk_…' })"
+          $p = Start-Process -FilePath $keyed -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$PWD\inno.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$PWD\inno.log" | Select-Object -Last 40; throw "installer exit $($p.ExitCode)" }
+          Test-Path "$env:LOCALAPPDATA\versum-node\versum-node.exe" | Out-Null
+          Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk" | Out-Null
+          Start-Sleep 8
+          Get-Content "$env:LOCALAPPDATA\versum-node\home\state\launch.log"
+          $env:VERSUM_E2E_EXPECT_SANDBOX = 'appcontainer'
+          node app\test\e2e\hub-e2e.mjs
+      - name: Node log + uninstall
+        if: always() && env.VERSUM_E2E_NODE_KEY != ''
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:LOCALAPPDATA\versum-node\home\state\node.log") { Get-Content "$env:LOCALAPPDATA\versum-node\home\state\node.log" | Select-Object -Last 80 }
+          $u = "$env:LOCALAPPDATA\versum-node\unins000.exe"
+          if (Test-Path $u) { Start-Process -FilePath $u -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait; Start-Sleep 3 }
+          if (Test-Path "$env:LOCALAPPDATA\versum-node\versum-node.exe") { throw "uninstall left versum-node.exe behind" }
+          if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk") { throw "uninstall left the Startup shortcut" }
+          Write-Host "uninstalled cleanly"
 
   macos:
     needs: source
     runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      VERSUM_E2E_NODE_KEY: ${{ secrets.VERSUM_E2E_NODE_KEY_MACOS }}
+      VERSUM_E2E_SECRET: ${{ secrets.VERSUM_E2E_SECRET }}
+      VERSUM_E2E_BUYER: ${{ secrets.VERSUM_E2E_BUYER }}
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: app, path: dist/app }
-      - name: App bundle + dmg → Versum-Node.dmg
+        with: { name: app, path: app }
+      - uses: actions/setup-node@v4
+        with: { node-version: ${{ needs.source.outputs.node }} }
+      - name: Embedded Python for both architectures (checksum pinned)
         run: |
           set -eu
-          chmod +x dist/app/packaging/macos/*.sh dist/app/installer/*.sh dist/app/install.sh
-          v="$(head -1 dist/app/version.txt)"
-          sh dist/app/packaging/macos/build-app.sh "$v" "$PWD/dist"
-          # the bundle launches and reads its own resources (no install here: that needs Docker)
-          hdiutil attach dist/Versum-Node.dmg -nobrowse -mountpoint /tmp/vn
-          test -x "/tmp/vn/Versum Node Installer.app/Contents/MacOS/versum-node-installer"
-          test -f "/tmp/vn/Versum Node Installer.app/Contents/Resources/app/bin/versum-node.mjs"
-          codesign --verify --deep "/tmp/vn/Versum Node Installer.app"
-          node "/tmp/vn/Versum Node Installer.app/Contents/Resources/app/bin/versum-node.mjs" scan >/dev/null
-          hdiutil detach /tmp/vn
+          base=$(node -p 'require("./app/packaging/versions.json").python.base_url'); tag=$(node -p 'require("./app/packaging/versions.json").python.tag')
+          for a in macos-arm64 macos-x64; do
+            f=$(node -p "require('./app/packaging/versions.json').python.assets['$a'].file"); s=$(node -p "require('./app/packaging/versions.json').python.assets['$a'].sha256")
+            curl -fsSL -o "$a.tar.gz" "$base/$tag/$f"
+            echo "$s  $a.tar.gz" | shasum -a 256 -c -
+            mkdir -p "py-$a" && tar -xzf "$a.tar.gz" -C "py-$a"
+          done
+          py-macos-arm64/python/bin/python3 -c 'import sys,platform; print(sys.version, platform.machine())'
+      - name: Single executables (Node SEA) for arm64 and x64
+        run: |
+          set -eu
+          NODE_V=${{ needs.source.outputs.node }}
+          chmod +x app/packaging/macos/*.sh app/installer/*.sh app/install.sh
+          (cd app && node scripts/build-sea.mjs bundle && node scripts/build-sea.mjs blob)
+          mkdir -p bin
+          for a in arm64 x64; do
+            curl -fsSL -o "node-$a.tar.gz" "https://nodejs.org/dist/v$NODE_V/node-v$NODE_V-darwin-$a.tar.gz"
+            curl -fsSL "https://nodejs.org/dist/v$NODE_V/SHASUMS256.txt" | grep " node-v$NODE_V-darwin-$a.tar.gz\$" | sed "s| node-v$NODE_V-darwin-$a.tar.gz|  node-$a.tar.gz|" | shasum -a 256 -c -
+            mkdir -p "node-$a" && tar -xzf "node-$a.tar.gz" -C "node-$a" --strip-components=1
+            (cd app && node scripts/build-sea.mjs inject "../node-$a/bin/node" "../bin/versum-node-$a")
+          done
+          file bin/versum-node-arm64 bin/versum-node-x64
+          VERSUM_APP_ROOT=$PWD/stage-arm64 bin/versum-node-arm64 version
+          # the Intel binary under Rosetta on this Apple-silicon runner
+          arch -x86_64 bin/versum-node-x64 version
+      - name: sandbox-check with each binary (seatbelt, embedded python)
+        run: |
+          set -eu
+          for a in arm64 x64; do
+            mkdir -p "stage-$a/probe"; cp "bin/versum-node-$a" "stage-$a/versum-node"; cp -R "py-macos-$a/python" "stage-$a/python"; cp -R app/probe/. "stage-$a/probe/"
+            printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"
+            [ "$a" = arm64 ] && printf 'arm64\n' > "stage-$a/arch.txt" || printf 'x86_64\n' > "stage-$a/arch.txt"
+            if [ "$a" = arm64 ]; then VERSUM_NODE_HOME=$PWD/home-$a "stage-$a/versum-node" sandbox-check
+            else VERSUM_NODE_HOME=$PWD/home-$a arch -x86_64 "stage-$a/versum-node" sandbox-check; fi
+          done
+      - name: App bundle + dmg per architecture
+        run: |
+          set -eu
+          mkdir -p dist
+          sh app/packaging/macos/build-app.sh "${{ needs.source.outputs.version }}" arm64 "$PWD/dist" bin/versum-node-arm64 py-macos-arm64/python
+          sh app/packaging/macos/build-app.sh "${{ needs.source.outputs.version }}" x86_64 "$PWD/dist" bin/versum-node-x64 py-macos-x64/python
+          for d in dist/Versum-Node-arm64.dmg dist/Versum-Node-x64.dmg; do s=$(stat -f %z "$d"); echo "$d: $((s / 1048576)) MB"; [ "$s" -le 104857600 ] || { echo "over 100 MB"; exit 1; }; done
       - uses: actions/upload-artifact@v4
-        with: { name: macos-installer, path: dist/Versum-Node.dmg }
+        with: { name: macos-installers, path: dist/Versum-Node-*.dmg }
+      - name: END TO END — mount the keyed .dmg, run the installer app, pair, lease, run under sandbox-exec, complete
+        if: env.VERSUM_E2E_NODE_KEY != ''
+        timeout-minutes: 15
+        run: |
+          set -eu
+          export VERSUM_NODE_HEARTBEAT_SECONDS=5
+          keyed="$PWD/dist/Versum-Node-arm64-${VERSUM_E2E_NODE_KEY}-hub-api.suverse.io~launchloop-dev.dmg"
+          cp dist/Versum-Node-arm64.dmg "$keyed"
+          hdiutil attach "$keyed" -nobrowse -mountpoint /tmp/vn
+          "/tmp/vn/Versum Node Installer.app/Contents/MacOS/versum-node-installer" || { cat ~/.versum-node/state/install.log; exit 1; }
+          sed -E 's/llk_[0-9A-Za-z]{32}/llk_…/g' ~/.versum-node/state/install.log
+          launchctl print "gui/$(id -u)/io.suverse.versum-node" | head -5
+          export VERSUM_E2E_EXPECT_SANDBOX=seatbelt
+          node app/test/e2e/hub-e2e.mjs
+      - name: Node log + uninstall
+        if: always() && env.VERSUM_E2E_NODE_KEY != ''
+        run: |
+          [ -f ~/.versum-node/state/node.log ] && tail -80 ~/.versum-node/state/node.log || true
+          [ -x ~/.versum-node/app/uninstall.sh ] && ~/.versum-node/app/uninstall.sh || true
+          hdiutil detach /tmp/vn 2>/dev/null || true
+          [ ! -d ~/.versum-node ] && echo "uninstalled cleanly"
 
   release:
     if: github.ref_type == 'tag'
@@ -103,11 +239,12 @@ jobs:
         with:
           files: |
             out/versum-node-setup.exe
-            out/Versum-Node.dmg
+            out/Versum-Node-arm64.dmg
+            out/Versum-Node-x64.dmg
             out/*.tar.gz
           body: |
-            Installers for people who do not open a terminal. **Unsigned for now.**
-            - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node`, checks WSL2 and Docker Desktop, registers a scheduled task at logon, opens http://127.0.0.1:3311/. Every step is written to `%LOCALAPPDATA%\versum-node\install.log`; if it stops, the window stays open with the reason (Start menu → "Versum node install log").
-            - **macOS** — `Versum-Node.dmg`: right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, needs Docker Desktop or OrbStack, registers a launchd agent, opens the node page.
-            - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh`
-            Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself.
+            **One click, nothing else.** No Docker, no WSL, no terminal, no administrator, no reboot. Unsigned for now.
+            - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node` (a single binary + an embedded Python), starts the node at sign-in from the Startup folder, opens http://127.0.0.1:3311/. Jobs run in a Windows AppContainer: no network, no access to your files, memory and CPU capped. Remove it from Settings → Apps.
+            - **macOS** — `Versum-Node-arm64.dmg` (Apple silicon) or `Versum-Node-x64.dmg` (Intel): right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, registers a launchd agent, opens the node page. Jobs run under sandbox-exec: no network, read-only system, writable only inside the job's folder. Remove with `~/.versum-node/app/uninstall.sh`.
+            - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh` (Podman/Docker containers; the only kind of node that runs container, GPU and network jobs).
+            Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself. Each installer on this page was installed on a clean GitHub runner, paired to the dev hub, and completed a job inside its sandbox before being published.

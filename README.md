@@ -9,7 +9,10 @@ advertises "skills": it offers resources and time, nothing else.
 
 **Status: alpha.** The node leases jobs from the hub, runs them in a wiped container and reports
 them; the first live job went end to end on 2026-10-25. Linux x86_64 / aarch64 (rootless Podman or
-Docker), macOS (Docker Desktop or OrbStack), Windows 10/11 (WSL2 + Docker Desktop). Node.js ≥ 20 is
+Docker). **Windows 10/11 and macOS 12+ (v0.4.0): one click, nothing else** — the installer from the site is a single
+binary with an embedded Python; script jobs run inside the operating system's own sandbox (Windows AppContainer,
+macOS sandbox-exec), no Docker, no WSL, no administrator, see [docs/native-sandbox.md](docs/native-sandbox.md).
+On Linux, Node.js ≥ 20 is
 downloaded if the machine has none. No dependencies: `lib/` is the whole program, read it.
 
 ## Install (one line, then no terminal)
@@ -24,7 +27,9 @@ curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install
 
 ```powershell
 # Windows (PowerShell, not as administrator)
-$env:VERSUM_NODE_KEY='llk_…'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.ps1 | iex
+# Windows / macOS: download the installer from https://versum.suverse.io/connect (the key is in the file name) and double-click it.
+# Advanced Windows (WSL2 + Docker Desktop, for GPU work later):
+$env:VERSUM_NODE_KEY='llk_…'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/installer/install-wsl.ps1 | iex
 ```
 
 Without the two variables the same line installs an unpaired node and its page asks for the key.
@@ -43,7 +48,8 @@ there would be root on the machine); rootless Podman needs no consent.
 
 Read the installers before you run them: [install.sh](install.sh) →
 [installer/install.sh](installer/install.sh) (Linux), [installer/install-macos.sh](installer/install-macos.sh),
-[install.ps1](install.ps1) (Windows).
+[installer/install-wsl.ps1](installer/install-wsl.ps1) (Windows, advanced); the one-click installers are built by
+[.github/workflows/release.yml](.github/workflows/release.yml) from [packaging/](packaging/).
 
 ### The command line, if you prefer it
 
@@ -117,7 +123,9 @@ Payouts are in USDC on Base. You need a wallet address; you do not need to hold 
 ```
 bin/versum-node.mjs   the CLI: scan · doctor · pair · offer · on/off · status · start · once · run-local · prune
 lib/scan.mjs          cores, RAM, GPU (nvidia-smi / rocm-smi), disk, connection type — pure parsers, tested on fixtures
-lib/runtime.mjs       finds Podman or Docker, insists on rootless
+lib/runtime.mjs       finds the executor: the built-in sandbox on Windows/macOS, Podman or Docker (rootless) on Linux
+lib/native.mjs        the native sandbox: AppContainer (Windows, via packaging/windows/sandbox) / Seatbelt (macOS)
+lib/container.mjs     the container executor (pull by digest, containerArgs posture, per-job proxy, cgroup cpu)
 lib/manifest.mjs      validates the hub's manifest and builds the container argv (the whole security posture, in one file)
 lib/runner.mjs        one attempt: inputs → pull by digest → run → meter → upload /job/out → report → wipe
 lib/metering.mjs      cpu seconds from the container's cgroup, as evidence beside the hub's clock

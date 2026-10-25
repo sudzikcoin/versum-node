@@ -15,6 +15,15 @@ Who can hurt whom, and what the node does about it. Honest about what it does no
 | Job reads the node's secrets | the container gets exactly the manifest's `env` plus `VERSUM_*` ids; the node's environment is never forwarded; the key lives in `config.json` 0600 outside `/job` | — |
 | Illegal content processed on this machine | nothing is inspected or kept; buyers are identified and pay through escrow; abuse reports go to the hub | the owner's jurisdiction; read the terms before sharing |
 
+## The node owner, against a malicious job — Windows and macOS (v0.4.0, no container)
+
+See [native-sandbox.md](native-sandbox.md) for the full table. In short: Windows runs the job in an AppContainer
+with zero capabilities (no network including loopback, no user files, no other processes) under a Job Object
+(memory cap, CPU rate cap, 64 processes, kill on close); macOS runs it under a deny-by-default Seatbelt profile
+(no network, read-only system, writable only inside the job directory, nothing under /Users) with `ulimit -t`,
+`ulimit -f` and `nice`. Residuals: macOS memory and disk are polled limits, not kernel caps; a `setsid()` job on
+macOS outlives the kill but stays sandboxed and budgeted; the installers are not code-signed.
+
 ## The buyer, against a malicious node
 
 | Threat | Control in v1 | Residual |

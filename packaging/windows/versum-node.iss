@@ -1,13 +1,15 @@
-; versum-node — Windows installer (Inno Setup 6). Built by .github/workflows/release.yml on a tag.
-; What the .exe does: copies the node program under %LOCALAPPDATA%\versum-node (no administrator rights),
-; then runs setup.ps1, which is the same install.ps1 the one-liner uses: WSL2 + Docker Desktop checks,
-; the node inside Ubuntu (WSL), a scheduled task at logon, and the local page http://127.0.0.1:3311/.
-; The pairing key travels in the installer's FILE NAME (versum-node-setup-llk_….exe) — see setup.ps1.
+; versum-node — Windows installer (Inno Setup 6), v0.4.0: ONE CLICK, NOTHING ELSE.
+; Built by .github/workflows/release.yml on a tag. What the .exe does:
+;   copies versum-node.exe (a single Node.js binary), versum-sandbox.exe (the AppContainer helper) and the
+;   embedded Python under %LOCALAPPDATA%\versum-node — per user, no administrator prompt, no WSL, no Docker,
+;   no reboot; puts a Startup-folder shortcut (the node starts hidden at every sign-in); starts the node now
+;   and opens http://127.0.0.1:3311/ already paired — the key travels in the installer's FILE NAME
+;   (versum-node-setup-llk_….exe, read by launch.vbs). Settings → Apps → Uninstall removes everything.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\..\dist\win\app"
+  #define SourceDir "..\..\dist\win\stage"
 #endif
 #ifndef OutDir
   #define OutDir "..\..\dist"
@@ -23,32 +25,54 @@ AppSupportURL=https://github.com/sudzikcoin/versum-node
 DefaultDirName={localappdata}\versum-node
 DisableDirPage=yes
 DisableProgramGroupPage=yes
+DisableReadyPage=yes
+DisableFinishedPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutDir}
 OutputBaseFilename=versum-node-setup
-Compression=lzma2
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName=Versum node
 SetupLogging=yes
+CloseApplications=no
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "{#SourceDir}\packaging\windows\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\packaging\windows\setup.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\versum-node.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\versum-sandbox.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\launch.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\probe\*"; DestDir: "{app}\probe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
+Name: "{userstartup}\Versum node"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; Comment: "Starts the Versum node hidden at sign-in"
 Name: "{userprograms}\Versum node\Versum node page"; Filename: "http://127.0.0.1:3311/"
-Name: "{userprograms}\Versum node\Versum node setup (run again)"; Filename: "{app}\setup.cmd"; WorkingDir: "{app}"
-Name: "{userprograms}\Versum node\Versum node install log"; Filename: "notepad.exe"; Parameters: """{localappdata}\versum-node\install.log"""
+Name: "{userprograms}\Versum node\Start Versum node"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"" --open"; WorkingDir: "{app}"
+Name: "{userprograms}\Versum node\Versum node log"; Filename: "notepad.exe"; Parameters: """{app}\home\state\node.log"""
+Name: "{userprograms}\Versum node\Uninstall Versum node"; Filename: "{uninstallexe}"
 
 [Run]
-; Not `postinstall`: the setup step is the installation. setup.cmd opens a window that shows the progress
-; (WSL, Docker, the node), writes %LOCALAPPDATA%\versum-node\install.log from its first line, and on any
-; failure stays open with the reason (plus a message box). On success it closes itself and the browser opens
-; the node page. The installer's own path is passed so the key and hub can be read from the file name.
-Filename: "{app}\setup.cmd"; Parameters: "-Source ""{srcexe}"""; WorkingDir: "{app}"; Flags: nowait
+; the installer's own path is passed so the key and hub can be read from the file name; the node starts hidden
+; and the browser opens the page once it answers (launch.vbs waits up to a minute and says so if it does not)
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"" --open --source ""{srcexe}"""; WorkingDir: "{app}"; Flags: nowait
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"" -Uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "VersumNodeUninstall"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM versum-node.exe"; Flags: runhidden waituntilterminated; RunOnceId: "VersumNodeStop"
+Filename: "{app}\versum-sandbox.exe"; Parameters: "cleanup --list ""{app}\home\state\appcontainers.txt"""; Flags: runhidden waituntilterminated; RunOnceId: "VersumNodeProfiles"
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
+
+[Code]
+// an older node may be running (an upgrade): stop it before the files are replaced
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM versum-node.exe', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Result := '';
+end;

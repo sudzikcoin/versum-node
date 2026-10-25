@@ -1,6 +1,6 @@
-// The Windows installer's scripts, statically. v0.3.0 shipped BOM-less UTF-8 .ps1 files with arrows and check
-// marks: Windows PowerShell 5.1 read them as cp1252, the bytes became curly quotes, the parser failed, and the
-// window closed before a single line -- a silent failure on every real machine. These checks keep that out.
+// The Windows installer's pieces, statically. v0.3.0 shipped BOM-less UTF-8 scripts with arrows and check
+// marks: Windows PowerShell read them as cp1252 and the window closed before a single line. The v0.4.0 installer
+// has no PowerShell step at all (launch.vbs under wscript.exe), but every script Windows parses stays pure ASCII.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
@@ -9,44 +9,54 @@ import { dirname, join } from 'node:path'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => readFileSync(join(root, p))
+const ascii = (b) => [...b].map((c, i) => [c, i]).filter(([c]) => c > 0x7e || (c < 0x20 && c !== 0x0a && c !== 0x0d && c !== 0x09))
 
-test('install.ps1 and setup.ps1 are pure ASCII (5.1 has no BOM to tell it UTF-8)', () => {
-  for (const f of ['install.ps1', 'packaging/windows/setup.ps1']) {
-    const b = read(f)
-    const bad = [...b].map((c, i) => [c, i]).filter(([c]) => c > 0x7e || (c < 0x20 && c !== 0x0a && c !== 0x0d && c !== 0x09))
+test('launch.vbs and the advanced install.ps1 are pure ASCII', () => {
+  for (const f of ['packaging/windows/launch.vbs', 'installer/install-wsl.ps1']) {
+    const bad = ascii(read(f))
     assert.deepEqual(bad.slice(0, 3), [], `${f}: non-ASCII byte(s) at offset ${bad.map(([, i]) => i).slice(0, 3)}`)
   }
 })
 
-test('setup.cmd is ASCII with CRLF line endings (cmd.exe misreads LF-only files)', () => {
-  const s = read('packaging/windows/setup.cmd').toString('latin1')
-  assert.ok(!/[^\x09\x0a\x0d\x20-\x7e]/.test(s), 'non-ASCII in setup.cmd')
-  assert.ok(!/[^\r]\n/.test(s) && !s.startsWith('\n'), 'LF without CR in setup.cmd')
-  assert.match(s, /-ExecutionPolicy Bypass -File "%~dp0setup\.ps1" %\*/, 'runs setup.ps1 with Bypass and passes the arguments through')
-  assert.match(s, /install\.log/, 'names the log')
-  assert.match(s, /pause/, 'waits on failure')
+test('launch.vbs reads the key and hub from the installer name, strips the extension and a "(1)" suffix, starts hidden, opens the page', () => {
+  const s = read('packaging/windows/launch.vbs').toString()
+  assert.match(s, /GetBaseName\(src\)/, 'the extension is removed before the hub is read')
+  assert.match(s, /re\.Pattern = "\\s\*\\\(\\d\+\\\)\$"/, 'a browser duplicate suffix is removed')
+  assert.match(s, /llk_\[0-9A-Za-z\]\{32\}/)
+  assert.match(s, /-hub-\(\[A-Za-z0-9\._~-\]\+\)\$/, 'the hub code is anchored to the end of the base name')
+  assert.match(s, /env\("VERSUM_NODE_KEY"\)/); assert.match(s, /env\("VERSUM_HUB"\)/); assert.match(s, /env\("VERSUM_NODE_HOME"\)/)
+  assert.match(s, /sh\.Run cmd, 0, False/, 'the node starts with a hidden window')
+  assert.match(s, /127\.0\.0\.1:3311\/api\/state/, 'waits for the page before opening the browser')
+  assert.match(s, /MsgBox/, 'a failure is shown, never silent')
 })
 
-test('the Inno script ships setup.cmd and runs it (not powershell.exe directly)', () => {
+test('the Inno script: per-user, no PowerShell, startup shortcut, embedded python and the sandbox helper, full uninstall', () => {
   const iss = read('packaging/windows/versum-node.iss').toString()
-  assert.match(iss, /Source: "\{#SourceDir\}\\packaging\\windows\\setup\.cmd"; DestDir: "\{app\}"/)
-  assert.match(iss, /Source: "\{#SourceDir\}\\packaging\\windows\\setup\.ps1"; DestDir: "\{app\}"/)
-  assert.match(iss, /\[Run\][\s\S]*Filename: "\{app\}\\setup\.cmd"; Parameters: "-Source ""\{srcexe\}"""/)
-  assert.match(iss, /Versum node setup \(run again\)"; Filename: "\{app\}\\setup\.cmd"/)
-  assert.match(iss, /install\.log/, 'a Start-menu entry opens the log')
-  for (const f of ['packaging/windows/setup.cmd', 'packaging/windows/setup.ps1', 'install.ps1']) assert.ok(existsSync(join(root, f)), f)
+  const code = iss.split('\n').filter((l) => !l.trimStart().startsWith(';') && !l.trimStart().startsWith('//')).join('\n')
+  assert.match(iss, /PrivilegesRequired=lowest/)
+  assert.match(iss, /DefaultDirName=\{localappdata\}\\versum-node/)
+  assert.ok(!/powershell/i.test(code), 'no PowerShell anywhere in the installer')
+  assert.ok(!/wsl|docker/i.test(code), 'no WSL, no Docker')
+  for (const f of ['versum-node.exe', 'versum-sandbox.exe', 'launch.vbs']) assert.match(iss, new RegExp(`Source: "\\{#SourceDir\\}\\\\${f.replace('.', '\\.')}"`), f)
+  assert.match(iss, /Source: "\{#SourceDir\}\\python\\\*"; DestDir: "\{app\}\\python"/)
+  assert.match(iss, /Name: "\{userstartup\}\\Versum node"; Filename: "\{sys\}\\wscript\.exe"; Parameters: """\{app\}\\launch\.vbs"""/)
+  assert.match(iss, /\[Run\][\s\S]*wscript\.exe"; Parameters: """\{app\}\\launch\.vbs"" --open --source ""\{srcexe\}"""/)
+  assert.match(iss, /\[UninstallRun\][\s\S]*taskkill\.exe"; Parameters: "\/F \/IM versum-node\.exe"/)
+  assert.match(iss, /versum-sandbox\.exe"; Parameters: "cleanup --list/)
+  assert.match(iss, /\[UninstallDelete\]\s+Type: filesandordirs; Name: "\{app\}"/)
+  for (const f of ['packaging/windows/launch.vbs', 'packaging/windows/sandbox/Sandbox.cs', 'installer/install-wsl.ps1']) assert.ok(existsSync(join(root, f)), f)
 })
 
-test('setup.ps1 reads key and hub from the file name, tolerates a browser "(1)" suffix, and has a -DryRun', () => {
-  const s = read('packaging/windows/setup.ps1').toString()
-  assert.match(s, /param\(\[string\]\$Source = '', \[switch\]\$Uninstall, \[switch\]\$DryRun\)/)
-  assert.match(s, /'llk_\[0-9A-Za-z\]\{32\}'/)
-  assert.match(s, /'-hub-\(\[A-Za-z0-9\._~-\]\+\)'/, 'hub regex must not be anchored to .exe$')
-  assert.match(s, /VERSUM_NODE_DRYRUN = '1'/)
-  assert.match(s, /exit 3/, 'stopped-and-shown exit code for setup.cmd')
-  const i = read('install.ps1').toString()
-  assert.match(i, /\$DryRun = \(\$env:VERSUM_NODE_DRYRUN -eq '1'\)/)
-  assert.match(i, /Get-Command \$exe -ErrorAction SilentlyContinue/, 'never assumes wsl.exe exists')
-  assert.match(i, /function Stop-Here/)
-  assert.match(i, /install\.log/)
+test('the sandbox helper: zero capabilities, a job object with memory + cpu + kill-on-close, the job dir granted, probe/delete/cleanup', () => {
+  const cs = read('packaging/windows/sandbox/Sandbox.cs').toString()
+  assert.match(cs, /CreateAppContainerProfile\(name, name, "versum-node job sandbox", IntPtr\.Zero, 0, out sid\)/, 'no capabilities')
+  assert.match(cs, /CapabilityCount = 0/)
+  assert.match(cs, /PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = \(IntPtr\)0x20009/)
+  assert.match(cs, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE \| Native\.JOB_OBJECT_LIMIT_JOB_MEMORY \| Native\.JOB_OBJECT_LIMIT_ACTIVE_PROCESS/)
+  assert.match(cs, /JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP/)
+  assert.match(cs, /FileSystemRights\.FullControl, InheritanceFlags\.ContainerInherit \| InheritanceFlags\.ObjectInherit/)
+  assert.match(cs, /new SecurityIdentifier\("S-1-15-2-1"\)/, 'ALL APPLICATION PACKAGES for the python tree')
+  for (const c of ['"probe"', '"grant-read"', '"run"', '"delete"', '"cleanup"']) assert.ok(cs.includes(`case ${c}:`), c)
+  assert.match(cs, /TerminateJobObject\(job, 124\)/, 'the time limit terminates the whole job')
+  assert.match(cs, /Console\.Error\.WriteLine\("\[sandbox\] "/, 'its own lines are marked for the node')
 })

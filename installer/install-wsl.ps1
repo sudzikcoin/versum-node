@@ -1,7 +1,8 @@
-# versum-node installer -- Windows 10 (2004+) / 11. Run in PowerShell:
-#   irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.ps1 | iex
+# versum-node ADVANCED Windows installer (WSL2 + Docker Desktop) -- for GPU work later; the normal path is the
+# one-click .exe from the site (no WSL, no Docker). Windows 10 (2004+) / 11. Run in PowerShell:
+#   irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/installer/install-wsl.ps1 | iex
 # With the key from the site (nothing to type afterwards):
-#   $env:VERSUM_NODE_KEY='llk_...'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.ps1 | iex
+#   $env:VERSUM_NODE_KEY='llk_...'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/installer/install-wsl.ps1 | iex
 #
 # What it does, step by step, and stops with exact instructions when a step needs a reboot or a download:
 #   1. checks Windows 10 2004+ / 11

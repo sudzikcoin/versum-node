@@ -14,7 +14,7 @@ The header `x-versum-protocol: 2.0.0` names what the node speaks.
 | `GET /me/node` | — | my offer as stored: enabled, price, share, windows, window_open_now, presence, reputation, earnings |
 | `PUT /me/node` | `{ resources?, share?, price_per_minute_usd?, mobility?, windows?, timezone?, enabled? }` | change any part of the offer; `enabled: true` needs a price and a scan |
 
-**resources** (the scan): `cpu_cores, cpu_model, cpu_arch, ram_mb, disk_free_mb, gpu_count, gpu_model, gpu_vram_mb, os, container_runtime (docker|podman|none), connection_type (ethernet|wifi|cellular|satellite|unknown), downlink_mbps, uplink_mbps, node_version, detected {}`. `detected` may never carry a path, a user name or an environment variable.
+**resources** (the scan): `cpu_cores, cpu_model, cpu_arch, ram_mb, disk_free_mb, gpu_count, gpu_model, gpu_vram_mb, os, container_runtime (docker|podman|none), executor_kind (container_docker | script_native — v2.1, 0.4.0: a script_native node runs `python` pieces only, without GPU or network, in the OS sandbox; the scheduler offers it nothing else), connection_type (ethernet|wifi|cellular|satellite|unknown), downlink_mbps, uplink_mbps, node_version, detected {}`. `detected` may never carry a path, a user name or an environment variable.
 
 **share**: `cpu_cores, ram_mb, disk_mb` (null = all of the scan), `gpu, max_parallel_jobs (1–32), max_job_minutes, allow_network`.
 

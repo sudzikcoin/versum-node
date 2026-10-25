@@ -84,7 +84,7 @@ async function main() {
   if (!out) await fail(`no result.json among outputs: ${JSON.stringify(done.pieces[0].outputs)}`)
   const result = await (await fetch(out.url)).json()
   say(`probe: ${JSON.stringify(result)}`)
-  const must = ['network_blocked', 'dns_blocked', 'loopback_blocked', 'users_dir_blocked', 'home_write_blocked', 'out_write_ok', 'temp_inside_ok', 'cwd', 'env_home_inside']
+  const must = ['network_blocked', 'dns_blocked', 'loopback_blocked', 'users_dir_blocked', 'data_volume_blocked', 'home_write_blocked', 'out_write_ok', 'temp_inside_ok', 'cwd_ok', 'env_home_inside']
   const open = must.filter((k) => result[k] !== true)
   if (open.length) await fail(`the sandbox left these open: ${open.join(', ')}`)
   if (result.piece_args?.platform !== process.platform) await fail(`piece args did not arrive: ${JSON.stringify(result.piece_args)}`)

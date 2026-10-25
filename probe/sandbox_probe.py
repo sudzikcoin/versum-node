@@ -40,6 +40,21 @@ def users_dir():
         raise OSError("empty listing")
 
 
+def data_volume():
+    # macOS: /Users is a firmlink to /System/Volumes/Data/Users; the other spelling must be shut too
+    names = os.listdir("/System/Volumes/Data/Users" if os.name != "nt" else "C:\\Users\\Public")
+    if not names:
+        raise OSError("empty listing")
+
+
+def cwd_of(job_dir):
+    try:
+        c = os.getcwd()
+    except OSError as e:
+        return False, "getcwd: %s" % e
+    return (c == job_dir or os.path.realpath(c) == os.path.realpath(job_dir)), c
+
+
 def home_write():
     # a path outside the job directory: the real profile on Windows, /Users/Shared on macOS (world-writable without a sandbox)
     if os.name == "nt":
@@ -59,9 +74,10 @@ def temp_outside():
 
 
 def main():
-    job_dir = os.environ.get("VERSUM_JOB_DIR", os.getcwd())
+    job_dir = os.environ.get("VERSUM_JOB_DIR") or os.getcwd()
     out_dir = os.path.join(job_dir, "out")
     t0 = time.time()
+    cwd_ok, cwd = cwd_of(job_dir)
     result = {
         "platform": platform.system(),
         "python": sys.version.split()[0],
@@ -69,9 +85,11 @@ def main():
         "dns_blocked": blocked(dns),
         "loopback_blocked": blocked(lambda: connect("127.0.0.1", 3311)) and blocked(lambda: connect("127.0.0.1", 80)),
         "users_dir_blocked": blocked(users_dir),
+        "data_volume_blocked": blocked(data_volume),
         "home_write_blocked": blocked(home_write),
         "temp_inside_ok": not blocked(temp_outside),
-        "cwd": os.getcwd() == job_dir or os.path.realpath(os.getcwd()) == os.path.realpath(job_dir),
+        "cwd_ok": cwd_ok,
+        "cwd": cwd,
         "env_home_inside": os.environ.get("HOME", os.environ.get("USERPROFILE", "")).startswith(job_dir),
         "piece_args": None,
     }

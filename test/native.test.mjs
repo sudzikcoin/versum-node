@@ -53,12 +53,14 @@ test('the Seatbelt profile denies by default, denies the network, denies /Users,
   const lines = p.trim().split('\n')
   assert.equal(lines[0], '(version 1)'); assert.equal(lines[1], '(deny default)')
   assert.ok(lines.includes('(deny network*)'))
-  const deny = lines.findIndex((l) => l.startsWith('(deny file-read* file-write* (subpath "/Users")'))
-  const home = lines.findIndex((l) => l === '(deny file-read* file-write* (subpath "/Users/u"))')
+  const data = lines.findIndex((l) => l === '(deny file-read* file-write* (subpath "/System/Volumes/Data"))')
+  const sys = lines.findIndex((l) => l.startsWith('(allow file-read* (subpath "/usr/lib")'))
   const py = lines.findIndex((l) => l === '(allow file-read* (subpath "/Users/u/.versum-node/app/python"))')
   const job = lines.findIndex((l) => l === '(allow file-read* file-write* (subpath "/Users/u/.versum-node/jobs/a"))')
-  assert.ok(deny > 0 && home > deny && py > home && job > py, 'later rules win: the two allows come after the denies')
-  assert.ok(lines.some((l) => l.startsWith('(allow file-read-metadata (literal "/Users/u/.versum-node/jobs")')), 'ancestors readable as metadata only')
+  assert.ok(sys > 0 && data > sys && py > data && job > py, 'later rules win: the data-volume deny follows the /System allow, the two job allows come last')
+  assert.ok(lines.includes('(allow file-read-metadata)'), 'stat anywhere, so getcwd and path resolution work')
+  assert.ok(!lines.some((l) => /\(literal "\/Users"\)|\(literal "\/Library"\)/.test(l)), '/Users and /Library are not listable')
+  assert.ok(!lines.some((l) => /\(allow file-read\* .*\(subpath "\/Users"\)/.test(l)))
   assert.ok(lines.includes('(allow process-exec (subpath "/Users/u/.versum-node/app/python"))'))
   assert.ok(!p.includes('(allow network'))
 })
@@ -72,10 +74,10 @@ test('ps cputime and the process-group totals', () => {
 })
 
 test('the probe verdict names every open door', () => {
-  assert.deepEqual(probeVerdict({ network_blocked: true, loopback_blocked: true, users_dir_blocked: true, home_write_blocked: true, out_write_ok: true }), { ok: true, failures: [] })
-  const v = probeVerdict({ network_blocked: false, loopback_blocked: true, users_dir_blocked: true, home_write_blocked: true, out_write_ok: true })
+  assert.deepEqual(probeVerdict({ network_blocked: true, loopback_blocked: true, users_dir_blocked: true, home_write_blocked: true, out_write_ok: true, cwd_ok: true }), { ok: true, failures: [] })
+  const v = probeVerdict({ network_blocked: false, loopback_blocked: true, users_dir_blocked: true, home_write_blocked: true, out_write_ok: true, cwd_ok: true })
   assert.equal(v.ok, false); assert.match(v.failures[0], /network_blocked/)
-  assert.equal(probeVerdict(null).failures.length, 5)
+  assert.equal(probeVerdict(null).failures.length, 6)
 })
 
 test('runtime order: native first on Windows/macOS, containers on Linux, the owner can name one', () => {

@@ -101,6 +101,12 @@ image plus a command. Images are always pinned by digest. The manifest the hub s
 for mounts, devices, capabilities or runtime flags: the node builds the argv itself
 ([lib/manifest.mjs](lib/manifest.mjs)). The node pulls the image, runs it with the limits above,
 uploads `/job/out`, reports, removes the container and the working directory. Always, even on
+
+**The script contract, every runtime.** A job reads its inputs from `VERSUM_JOB_IN` and writes its results into
+`VERSUM_JOB_OUT` — on a Linux container those are `/job/in` and `/job/out`, on a Windows (AppContainer) or
+macOS (sandbox-exec) node they are the `in/` and `out/` folders of the attempt, and the working directory is
+the attempt's folder. A script written as `os.environ.get('VERSUM_JOB_OUT', '/job/out')` runs everywhere;
+one that hard-codes `/job/out` dies on a native node (0.4.1).
 failure. Full threat model: [docs/threat-model.md](docs/threat-model.md).
 
 ## How money works

@@ -19,6 +19,8 @@ $Port = if ($env:VERSUM_NODE_HEALTH_PORT) { $env:VERSUM_NODE_HEALTH_PORT } else 
 $Raw = $Repo.Replace('://github.com/', '://raw.githubusercontent.com/') + "/$Ref/install.sh"
 function Say($m) { Write-Host $m }
 function Stop-Here($m) { Write-Host ''; Write-Host "versum-node install: $m" -ForegroundColor Yellow; exit 1 }
+# How to come back after a reboot: the one-liner by default; the .exe installer sets VERSUM_NODE_RERUN to its Start-menu entry.
+$Rerun = if ($env:VERSUM_NODE_RERUN) { $env:VERSUM_NODE_RERUN } else { "irm $($Raw.Replace('install.sh','install.ps1')) | iex" }
 
 Say 'versum-node — Windows installer'
 # 1 — Windows version
@@ -32,13 +34,13 @@ try { $st = (& wsl.exe --status 2>$null | Out-String); if ($LASTEXITCODE -eq 0 -
 if (-not $wslOk) {
   Say 'wsl      not installed. Installing WSL2 with Ubuntu — Windows will ask for Administrator and then needs a REBOOT.'
   & wsl.exe --install -d $Distro
-  Stop-Here "WSL2 is being installed. Reboot, let Ubuntu finish its first start (it asks for a Linux username and password), then run this line again:`n  irm $Raw.Replace('install.sh','install.ps1') | iex"
+  Stop-Here "WSL2 is being installed. Reboot, let Ubuntu finish its first start (it asks for a Linux username and password), then run the installer again:`n  $Rerun"
 }
 $distros = (& wsl.exe -l -q 2>$null | Out-String) -split "`r?`n" | ForEach-Object { $_.Trim([char]0, ' ') } | Where-Object { $_ }
 if (-not ($distros -contains $Distro)) {
   Say "wsl      WSL is present but $Distro is not. Installing it — a window opens to pick a Linux username and password; close it when done."
   & wsl.exe --install -d $Distro
-  Stop-Here "finish the $Distro setup in its window, then run this line again."
+  Stop-Here "finish the $Distro setup in its window, then run the installer again: $Rerun"
 }
 Say "wsl      $Distro ✓"
 
@@ -53,7 +55,7 @@ if (-not (Docker-Ready)) {
     else { Say '         download it: https://www.docker.com/products/docker-desktop/  (keep "Use WSL 2 based engine" on)'; Start-Process 'https://www.docker.com/products/docker-desktop/' }
   }
   Say '         waiting for Docker to answer (first start takes a minute; accept its terms when it asks)'
-  $i = 0; while (-not (Docker-Ready)) { Start-Sleep 5; $i++; Write-Host -NoNewline '.'; if ($i -gt 360) { Stop-Here 'Docker did not answer within 30 minutes — start Docker Desktop and run this line again.' } }
+  $i = 0; while (-not (Docker-Ready)) { Start-Sleep 5; $i++; Write-Host -NoNewline '.'; if ($i -gt 360) { Stop-Here "Docker did not answer within 30 minutes — start Docker Desktop and run the installer again: $Rerun" } }
   Write-Host ''
 }
 Say 'docker   answering ✓ (make sure Settings → Resources → WSL integration has your distro on)'

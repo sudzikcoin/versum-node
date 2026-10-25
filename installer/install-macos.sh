@@ -62,10 +62,17 @@ else
 fi
 
 # 3 — the program
-say "program  $REPO @ $VERSION → $HOME_DIR/app"
-tmp="$(mktemp -d)"
-curl -fsSL "$REPO/archive/$VERSION.tar.gz" -o "$tmp/app.tar.gz"
-rm -rf "$HOME_DIR/app.new"; mkdir -p "$HOME_DIR/app.new"; tar -xzf "$tmp/app.tar.gz" -C "$HOME_DIR/app.new" --strip-components=1; rm -rf "$tmp"
+rm -rf "$HOME_DIR/app.new"; mkdir -p "$HOME_DIR/app.new"
+if [ -n "${VERSUM_NODE_SOURCE_DIR:-}" ] && [ -f "$VERSUM_NODE_SOURCE_DIR/bin/versum-node.mjs" ]; then
+  # the .app installer carries the program inside itself (the same files a tag archive has)
+  say "program  $VERSION from $VERSUM_NODE_SOURCE_DIR → $HOME_DIR/app"
+  cp -R "$VERSUM_NODE_SOURCE_DIR/." "$HOME_DIR/app.new/"
+else
+  say "program  $REPO @ $VERSION → $HOME_DIR/app"
+  tmp="$(mktemp -d)"
+  curl -fsSL "$REPO/archive/$VERSION.tar.gz" -o "$tmp/app.tar.gz"
+  tar -xzf "$tmp/app.tar.gz" -C "$HOME_DIR/app.new" --strip-components=1; rm -rf "$tmp"
+fi
 rm -rf "$HOME_DIR/app.prev"; [ -d "$HOME_DIR/app" ] && mv "$HOME_DIR/app" "$HOME_DIR/app.prev"; mv "$HOME_DIR/app.new" "$HOME_DIR/app"
 cat > "$HOME_DIR/bin/versum-node" <<EOS
 #!/bin/sh

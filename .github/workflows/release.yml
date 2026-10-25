@@ -1,0 +1,97 @@
+# Installers for people who will not open a terminal (stage 7, 2026-10-25). On a tag v* this builds, from the
+# same code the one-liner installs:
+#   versum-node-setup.exe   Windows — Inno Setup around install.ps1 (WSL2 + Docker Desktop + scheduled task)
+#   Versum-Node.dmg         macOS   — "Versum Node Installer.app" around installer/install-macos.sh (launchd agent)
+#   versum-node-<ver>.tar.gz  the program itself, for install.sh / anyone
+# and attaches them to the GitHub Release of that tag. UNSIGNED: the site documents SmartScreen "More info →
+# Run anyway" and macOS right-click → Open. The hub serves the same files renamed with the pairing key inside
+# the file name (versum-node-setup-llk_….exe); the installers read the key from their own name.
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm test
+      - name: Stage the program (what every installer carries)
+        run: |
+          set -eu
+          v="${GITHUB_REF_NAME}"; [ "${GITHUB_REF_TYPE}" = tag ] || v="v0.0.0-$(git rev-parse --short HEAD)"
+          mkdir -p dist/app
+          cp -R bin lib egress installer protocol docs packaging install.sh install.ps1 package.json README.md LICENSE dist/app/
+          printf '%s\n' "$v" > dist/app/version.txt
+          (cd dist && tar -czf "versum-node-${v#v}.tar.gz" app)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with: { name: app, path: dist/app, include-hidden-files: true }
+      - uses: actions/upload-artifact@v4
+        with: { name: source-tarball, path: dist/*.tar.gz }
+
+  windows:
+    needs: source
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: app, path: dist/win/app }
+      - name: Inno Setup → versum-node-setup.exe
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
+          $v = (Get-Content dist/win/app/version.txt | Select-Object -First 1).TrimStart('v')
+          & $iscc "/DAppVersion=$v" "/DSourceDir=$PWD\dist\win\app" "/DOutDir=$PWD\dist" "dist\win\app\packaging\windows\versum-node.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item dist/versum-node-setup.exe | Format-List Name, Length
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-installer, path: dist/versum-node-setup.exe }
+
+  macos:
+    needs: source
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: app, path: dist/app }
+      - name: App bundle + dmg → Versum-Node.dmg
+        run: |
+          set -eu
+          chmod +x dist/app/packaging/macos/*.sh dist/app/installer/*.sh dist/app/install.sh
+          v="$(head -1 dist/app/version.txt)"
+          sh dist/app/packaging/macos/build-app.sh "$v" "$PWD/dist"
+          # the bundle launches and reads its own resources (no install here: that needs Docker)
+          hdiutil attach dist/Versum-Node.dmg -nobrowse -mountpoint /tmp/vn
+          test -x "/tmp/vn/Versum Node Installer.app/Contents/MacOS/versum-node-installer"
+          test -f "/tmp/vn/Versum Node Installer.app/Contents/Resources/app/bin/versum-node.mjs"
+          codesign --verify --deep "/tmp/vn/Versum Node Installer.app"
+          node "/tmp/vn/Versum Node Installer.app/Contents/Resources/app/bin/versum-node.mjs" scan >/dev/null
+          hdiutil detach /tmp/vn
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-installer, path: dist/Versum-Node.dmg }
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [source, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - run: ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/versum-node-setup.exe
+            out/Versum-Node.dmg
+            out/*.tar.gz
+          body: |
+            Installers for people who do not open a terminal. **Unsigned for now.**
+            - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node`, checks WSL2 and Docker Desktop, registers a scheduled task at logon, opens http://127.0.0.1:3311/.
+            - **macOS** — `Versum-Node.dmg`: right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, needs Docker Desktop or OrbStack, registers a launchd agent, opens the node page.
+            - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh`
+            Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself.

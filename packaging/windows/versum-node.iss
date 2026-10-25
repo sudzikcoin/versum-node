@@ -36,15 +36,19 @@ SetupLogging=yes
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#SourceDir}\packaging\windows\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\packaging\windows\setup.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{userprograms}\Versum node\Versum node page"; Filename: "http://127.0.0.1:3311/"
-Name: "{userprograms}\Versum node\Versum node setup (run again)"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"""; WorkingDir: "{app}"
+Name: "{userprograms}\Versum node\Versum node setup (run again)"; Filename: "{app}\setup.cmd"; WorkingDir: "{app}"
+Name: "{userprograms}\Versum node\Versum node install log"; Filename: "notepad.exe"; Parameters: """{localappdata}\versum-node\install.log"""
 
 [Run]
-; Not `postinstall`: the setup step is the installation. A PowerShell window shows the progress
-; (WSL, Docker, the node) and closes itself; the browser opens on the node page at the end.
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"" -Source ""{srcexe}"""; WorkingDir: "{app}"; Flags: nowait
+; Not `postinstall`: the setup step is the installation. setup.cmd opens a window that shows the progress
+; (WSL, Docker, the node), writes %LOCALAPPDATA%\versum-node\install.log from its first line, and on any
+; failure stays open with the reason (plus a message box). On success it closes itself and the browser opens
+; the node page. The installer's own path is passed so the key and hub can be read from the file name.
+Filename: "{app}\setup.cmd"; Parameters: "-Source ""{srcexe}"""; WorkingDir: "{app}"; Flags: nowait
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"" -Uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "VersumNodeUninstall"

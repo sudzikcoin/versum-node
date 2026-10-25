@@ -41,6 +41,22 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { name: app, path: dist/win/app }
+      - name: Dry run under Windows PowerShell 5.1 (the shell the .exe really uses)
+        # The installed layout: {app}\setup.cmd, {app}\setup.ps1, {app}\app\install.ps1. A spaced path, a
+        # non-default hub and a browser's " (1)" suffix in the installer name. Must end with "DRY RUN OK" in the log.
+        shell: cmd
+        timeout-minutes: 10
+        env: { CI: '1' }
+        run: |
+          mkdir dist\stage\app
+          xcopy /E /I /Q dist\win\app dist\stage\app >nul
+          copy dist\win\app\packaging\windows\setup.cmd dist\stage\ >nul
+          copy dist\win\app\packaging\windows\setup.ps1 dist\stage\ >nul
+          call dist\stage\setup.cmd -DryRun -Source "C:\Users\Some One\Downloads\versum-node-setup-llk_abcdefghijklmnopqrstuvwxyz012345-hub-api.suverse.io~launchloop-dev (1).exe"
+          if errorlevel 1 exit /b 1
+          type "%LOCALAPPDATA%\versum-node\install.log"
+          findstr /C:"DRY RUN OK" "%LOCALAPPDATA%\versum-node\install.log" >nul || exit /b 1
+          findstr /C:"hub      https://api.suverse.io/launchloop-dev" "%LOCALAPPDATA%\versum-node\install.log" >nul || exit /b 1
       - name: Inno Setup → versum-node-setup.exe
         shell: pwsh
         run: |
@@ -91,7 +107,7 @@ jobs:
             out/*.tar.gz
           body: |
             Installers for people who do not open a terminal. **Unsigned for now.**
-            - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node`, checks WSL2 and Docker Desktop, registers a scheduled task at logon, opens http://127.0.0.1:3311/.
+            - **Windows** — `versum-node-setup.exe`: SmartScreen says "Windows protected your PC" → *More info* → *Run anyway*. Installs under `%LOCALAPPDATA%\versum-node`, checks WSL2 and Docker Desktop, registers a scheduled task at logon, opens http://127.0.0.1:3311/. Every step is written to `%LOCALAPPDATA%\versum-node\install.log`; if it stops, the window stays open with the reason (Start menu → "Versum node install log").
             - **macOS** — `Versum-Node.dmg`: right-click *Versum Node Installer* → *Open* → *Open* (macOS 15: System Settings → Privacy & Security → *Open Anyway*). Installs under `~/.versum-node`, needs Docker Desktop or OrbStack, registers a launchd agent, opens the node page.
             - **Linux** — `curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh`
             Download from the site (versum.suverse.io/connect) and the file name carries your pairing key: the node pairs by itself.

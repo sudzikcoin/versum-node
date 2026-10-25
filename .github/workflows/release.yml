@@ -48,7 +48,7 @@ jobs:
           node scripts/build-sea.mjs bundle
           node dist/sea/versum-node.cjs version
           mkdir -p dist/app
-          cp -R bin lib egress installer protocol docs probe packaging scripts install.sh package.json sea-config.json README.md LICENSE dist/app/
+          cp -R bin lib egress installer protocol docs probe packaging scripts test install.sh package.json sea-config.json README.md LICENSE dist/app/
           printf '%s\n' "${{ steps.v.outputs.version }}" > dist/app/version.txt
           cp dist/sea/versum-node.cjs dist/app/
           (cd dist && tar -czf "versum-node-${{ steps.v.outputs.version }}.tar.gz" app)
@@ -131,12 +131,17 @@ jobs:
           $keyed = "$PWD\dist\versum-node-setup-$($env:VERSUM_E2E_NODE_KEY)-hub-api.suverse.io~launchloop-dev.exe"
           Copy-Item dist\versum-node-setup.exe $keyed
           Write-Host "installing $(Split-Path $keyed -Leaf | ForEach-Object { $_ -replace 'llk_[0-9A-Za-z]{32}', 'llk_…' })"
-          $p = Start-Process -FilePath $keyed -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$PWD\inno.log" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content "$PWD\inno.log" | Select-Object -Last 40; throw "installer exit $($p.ExitCode)" }
-          Test-Path "$env:LOCALAPPDATA\versum-node\versum-node.exe" | Out-Null
-          Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk" | Out-Null
-          Start-Sleep 8
-          Get-Content "$env:LOCALAPPDATA\versum-node\home\state\launch.log"
+          # NOT -Wait: the installer's [Run] launches the node daemon, which inherits the installer's handles, so
+          # Start-Process -Wait would block until the node exits (never). Launch it, then poll for the files it lays down.
+          Start-Process -FilePath $keyed -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$PWD\inno.log"
+          $exe = "$env:LOCALAPPDATA\versum-node\versum-node.exe"
+          $deadline = (Get-Date).AddMinutes(4)
+          while (-not (Test-Path $exe) -and (Get-Date) -lt $deadline) { Start-Sleep 3 }
+          if (-not (Test-Path $exe)) { if (Test-Path "$PWD\inno.log") { Get-Content "$PWD\inno.log" | Select-Object -Last 40 }; throw "installer did not place versum-node.exe under %LOCALAPPDATA%" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\Versum node.lnk")) { throw "no Startup shortcut: the node would not start at sign-in" }
+          Write-Host "installed; the node is starting from the installer's launcher"
+          Start-Sleep 10
+          if (Test-Path "$env:LOCALAPPDATA\versum-node\home\state\launch.log") { Get-Content "$env:LOCALAPPDATA\versum-node\home\state\launch.log" }
           $env:VERSUM_E2E_EXPECT_SANDBOX = 'appcontainer'
           $env:VERSUM_E2E_RAM_MB = '1024'; $env:VERSUM_E2E_MINUTES = '9'
           node app\test\e2e\hub-e2e.mjs

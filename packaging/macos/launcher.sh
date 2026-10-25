@@ -13,11 +13,12 @@ mkdir -p "$HOME_DIR/state"; LOG="$HOME_DIR/state/install.log"
 dialog() { osascript -e "display dialog \"$1\" with title \"Versum node\" buttons {\"OK\"} default button 1" >/dev/null 2>&1 || true; }
 notify() { osascript -e "display notification \"$1\" with title \"Versum node\"" >/dev/null 2>&1 || true; }
 
-# 1 — the key and the hub, from the name of the disk image this app runs from
-MOUNT="$(printf '%s' "$APP_DIR" | awk -F/ '{ if ($2=="Volumes") print "/"$2"/"$3 }')"
+# 1 — the key and the hub, from the name of the disk image this app runs from. The mount point is wherever the
+# .dmg was attached (/Volumes/Versum Node for a user, but CI may use another path), found with df, not assumed.
+MOUNT="$(df "$APP_DIR" 2>/dev/null | awk 'NR==2 { for (i=9;i<=NF;i++) printf "%s%s", (i>9?" ":""), $i }')"
 IMAGE="${VERSUM_NODE_IMAGE_NAME:-}"
 if [ -z "$IMAGE" ] && [ -n "$MOUNT" ]; then
-  IMAGE="$(hdiutil info 2>/dev/null | awk -v m="$MOUNT" '/^image-path/ { sub(/^image-path[ \t]*:[ \t]*/, ""); p=$0 } index($0, m) && p { print p; exit }')"
+  IMAGE="$(hdiutil info 2>/dev/null | awk -v m="$MOUNT" '/^image-path/ { sub(/^image-path[ \t]*:[ \t]*/, ""); p=$0 } $0 ~ ("[ \t]" m "$") && p { print p; exit }')"
 fi
 NAME="$(basename "${IMAGE:-}" .dmg)"
 NAME="$(printf '%s' "$NAME" | sed -E 's/ *\([0-9]+\)$//')"

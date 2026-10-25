@@ -14,7 +14,7 @@ queue it leases from is being built. Linux x86_64 / aarch64, Node.js ≥ 20, roo
 ## Install (one line)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/installer/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh
 ```
 
 The script never asks for sudo and writes only under `~/.versum-node` and `~/.config/systemd/user`.

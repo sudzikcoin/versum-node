@@ -61,9 +61,11 @@ refused; 127.0.0.1:3311 (the node's own page!) → refused; `os.listdir("C:\\Use
   sandbox, `sysctl-read`, POSIX semaphores/shm (multiprocessing), three mach services (logger, libinfo,
   SecurityServer), `file-read-metadata` (stat), read of `/usr`, `/bin`, `/System`, `/private/etc`, time zone,
   dyld cache, `/dev`; write to `/dev/null`, `/dev/zero`, `/dev/tty`.
-- then **deny** read and write under `/Users`, `/Volumes`, `/private/var/folders`, `/private/tmp`, `/Library`
-  and the owner's home; then **allow** read of the Python tree and read+write of the attempt's directory
-  (later rules win). Ancestors of those two are readable as metadata only (so `getcwd` works).
+- `/Users`, `/Volumes`, `/Library` and the owner's home are **not listed and not allowed**, so deny-default keeps
+  them shut (no file contents, no directory listings); the data volume is denied again by its firmlink path
+  (`/System/Volumes/Data`) so that spelling cannot stand in for `/Users`. The only two trees opened are the
+  Python tree (read + execute) and the attempt's directory (read + write). The job's working directory is set
+  to the attempt's directory, so `getcwd()` resolves without reading any parent.
 - `(deny network*)`: no sockets of any family, no DNS, no loopback.
 - The job runs through `/bin/sh -c 'ulimit -t <cpu seconds> -f <blocks>; exec nice -n 10 sandbox-exec …'`
   in its own process group. CPU seconds are a hard kernel cap (time limit × cores + 30 s), a single file is
@@ -105,6 +107,13 @@ refused; 127.0.0.1:3311 (the node's own page!) → refused; `os.listdir("C:\\Use
   dyld cache lives) and the probe would catch it.
 - **The stdout/stderr of the job pass through the helper** (Windows) — a job can print anything, including
   lines that look like the helper's `[sandbox]` lines; the node only *logs* those, it never acts on them.
+- **The Intel (x64) build's sandbox is unverified on real Intel hardware.** GitHub's macOS runners are all Apple
+  silicon, so CI only loads the x64 binary under Rosetta (which proves it runs) — it does not run the Seatbelt
+  probe under Rosetta, because translated x86_64 processes need Rosetta's own runtime paths that the profile
+  denies. The sandbox code is identical to arm64's (which is fully probed each release); a buyer on an Intel Mac
+  gets the same profile, but it has not been exercised on an Intel kernel in CI. Running the Intel build under
+  Rosetta on an Apple-silicon Mac (the wrong download) will have its jobs killed by the sandbox — pick the
+  Apple-silicon dmg there.
 - **CI runners are not laptops.** `windows-latest` and `macos-latest` have Docker/WSL *installed*; the e2e
   does not use them (the node's runtime order puts the native sandbox first and the e2e asserts
   `executor_kind: script_native` + `sandbox: appcontainer|seatbelt`), but a true "clean image" is the user's

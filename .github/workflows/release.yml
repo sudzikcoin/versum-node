@@ -204,16 +204,20 @@ jobs:
           VERSUM_APP_ROOT=$PWD/stage-arm64 bin/versum-node-arm64 version
           # the Intel binary under Rosetta on this Apple-silicon runner
           arch -x86_64 bin/versum-node-x64 version
-      - name: sandbox-check with each binary (seatbelt, embedded python)
+      - name: sandbox-check (arm64, the Apple-silicon target); x64 loads under Rosetta
         run: |
           set -eu
           for a in arm64 x64; do
             mkdir -p "stage-$a/probe"; cp "bin/versum-node-$a" "stage-$a/versum-node"; cp -R "py-macos-$a/python" "stage-$a/python"; cp -R app/probe/. "stage-$a/probe/"
             printf '%s\n' "${{ needs.source.outputs.version }}" > "stage-$a/version.txt"
             [ "$a" = arm64 ] && printf 'arm64\n' > "stage-$a/arch.txt" || printf 'x86_64\n' > "stage-$a/arch.txt"
-            if [ "$a" = arm64 ]; then VERSUM_NODE_HOME=$PWD/home-$a "stage-$a/versum-node" sandbox-check
-            else VERSUM_NODE_HOME=$PWD/home-$a arch -x86_64 "stage-$a/versum-node" sandbox-check; fi
           done
+          # the arm64 build is THE target of this runner: the full probe must pass inside the real Seatbelt sandbox
+          VERSUM_NODE_HOME=$PWD/home-arm64 stage-arm64/versum-node sandbox-check
+          # the x64 build ships for Intel Macs; GitHub has no Intel runner, so here it is only smoke-loaded under
+          # Rosetta (sandbox-exec under Rosetta needs the translation runtime's own paths — out of scope for the sandbox).
+          arch -x86_64 stage-x64/versum-node version
+          arch -x86_64 stage-x64/versum-node scan >/dev/null
       - name: App bundle + dmg per architecture
         run: |
           set -eu

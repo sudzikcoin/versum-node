@@ -3,7 +3,7 @@
 # Node.js, no admin password. The disk image carries a single `versum-node` binary and an embedded Python; jobs
 # run under macOS's own sandbox (sandbox-exec). This script is what "Versum Node Installer.app" runs
 # (packaging/macos/launcher.sh) with VERSUM_NODE_SOURCE_DIR pointing inside the bundle.
-#   1. copies <source>/versum-node, <source>/python, <source>/probe into ~/.versum-node/app (quarantine cleared)
+#   1. copies <source>/versum-node, <source>/python, <source>/probe, pylib-lock.json into ~/.versum-node/app (quarantine cleared)
 #   2. pairs with VERSUM_NODE_KEY / VERSUM_HUB when the launcher found them in the image's file name
 #   3. installs a launchd agent (~/Library/LaunchAgents/io.suverse.versum-node.plist), starts it, waits for the
 #      local page http://127.0.0.1:3311/ and opens it
@@ -36,7 +36,7 @@ rm -rf "$HOME_DIR/app.new"; mkdir -p "$HOME_DIR/app.new"
 cp "$SRC/versum-node" "$HOME_DIR/app.new/versum-node"; chmod 755 "$HOME_DIR/app.new/versum-node"
 cp -R "$SRC/python" "$HOME_DIR/app.new/python"
 cp -R "$SRC/probe" "$HOME_DIR/app.new/probe"
-for f in version.txt arch.txt README.md LICENSE; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$HOME_DIR/app.new/$f"; done
+for f in version.txt arch.txt pylib-lock.json README.md LICENSE; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$HOME_DIR/app.new/$f"; done   # 0.4.2: the wheel lock rides along
 xattr -dr com.apple.quarantine "$HOME_DIR/app.new" 2>/dev/null || true
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 rm -rf "$HOME_DIR/app.prev"; [ -d "$HOME_DIR/app" ] && mv "$HOME_DIR/app" "$HOME_DIR/app.prev"; mv "$HOME_DIR/app.new" "$HOME_DIR/app"

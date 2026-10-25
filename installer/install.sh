@@ -23,6 +23,7 @@ REPO="${VERSUM_NODE_REPO:-https://github.com/sudzikcoin/versum-node}"
 NODE_MIN=20
 NODE_VERSION="${VERSUM_NODE_NODEJS:-v22.11.0}"
 PORT="${VERSUM_NODE_HEALTH_PORT:-3311}"
+STARTED=0
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'versum-node install: %s\n' "$*" >&2; exit 1; }
@@ -119,7 +120,7 @@ if [ "$MODE" = system ]; then
   sed "s|/var/lib/versum-node|$HOME_DIR|g; s|User=versum|User=$SVC_USER|; s|Group=versum|Group=$SVC_USER|" "$HOME_DIR/app/installer/versum-node-system.service" > /etc/systemd/system/versum-node.service
   if have systemctl; then
     systemctl daemon-reload
-    systemctl enable --now versum-node && say "service  versum-node (system) enabled and started"
+    systemctl enable --now versum-node && say "service  versum-node (system) enabled and started" && STARTED=1
   else say "service  no systemd here: run  $HOME_DIR/bin/versum-node start  under $SVC_USER with your supervisor"; fi
   STATUS_CMD="systemctl status versum-node · journalctl -u versum-node -f"
 else
@@ -127,11 +128,12 @@ else
   mkdir -p "$HOME/.config/systemd/user"
   sed "s|%h/.versum-node|$HOME_DIR|g" "$HOME_DIR/app/installer/versum-node.service" > "$HOME/.config/systemd/user/versum-node.service"
   if have systemctl && systemctl --user daemon-reload 2>/dev/null; then
-    systemctl --user enable --now versum-node && say "service  versum-node (user) enabled and started"
+    systemctl --user enable --now versum-node && say "service  versum-node (user) enabled and started" && STARTED=1
     if have loginctl; then loginctl enable-linger "$SVC_USER" 2>/dev/null && say "linger   enabled — the node keeps running when you log out" || say "linger   could not be enabled (run: loginctl enable-linger $SVC_USER) — the node stops when you log out"; fi
   else
     say "service  no user systemd here — starting the node in the background instead"
     nohup "$HOME_DIR/bin/versum-node" start >> "$HOME_DIR/state/node.log" 2>&1 &
+    STARTED=1
   fi
   STATUS_CMD="systemctl --user status versum-node · journalctl --user -u versum-node -f"
 fi
@@ -141,7 +143,7 @@ say ""
 say "installed. What this machine has:"
 as_user env VERSUM_NODE_HOME="$HOME_DIR" "$HOME_DIR/bin/versum-node" scan 2>/dev/null || true
 say ""
-say "the node is running. Everything else happens on its local page:"
+if [ "${STARTED:-0}" = 1 ]; then say "the node is running. Everything else happens on its local page:"; else say "start the node as shown above; its local page is then:"; fi
 say "  $URL"
 say "  pair with your key · choose what to share · set your price · pause · earnings · log"
 if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ "$MODE" = user ] && have xdg-open; then (xdg-open "$URL" >/dev/null 2>&1 &) ; say "  (opening it in your browser)"

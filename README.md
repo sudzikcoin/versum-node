@@ -7,34 +7,54 @@ connection), you choose how much of it to share, when, and at what price per min
 buyers run inside a throw-away container that is wiped when the job ends. The node never
 advertises "skills": it offers resources and time, nothing else.
 
-**Status: pre-alpha.** The node program is here and runs jobs locally (`run-local`); the hub's job
-queue it leases from is being built. Linux x86_64 / aarch64, Node.js ≥ 20, rootless Podman
-(recommended) or rootless Docker. No dependencies: `lib/` is the whole program, read it.
+**Status: alpha.** The node leases jobs from the hub, runs them in a wiped container and reports
+them; the first live job went end to end on 2026-10-25. Linux x86_64 / aarch64 (rootless Podman or
+Docker), macOS (Docker Desktop or OrbStack), Windows 10/11 (WSL2 + Docker Desktop). Node.js ≥ 20 is
+downloaded if the machine has none. No dependencies: `lib/` is the whole program, read it.
 
-## Install (one line)
+## Install (one line, then no terminal)
+
+On the site, **Connect a computer → Get a key**. The page shows the line for your OS with the key
+already inside it; it is one of these:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | sh
+# Linux and macOS (run as root on a Linux server: a dedicated user and a system service are created)
+curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | VERSUM_HUB='https://launchloop.suverse.io' VERSUM_NODE_KEY='llk_…' sh
 ```
 
-The script never asks for sudo and writes only under `~/.versum-node` and `~/.config/systemd/user`.
-It checks the OS and architecture, finds Node.js ≥ 20 or downloads an official build (checksum
-verified), finds Podman or Docker, downloads this repository, installs a user systemd unit and
-prints the next steps. Read it first: [installer/install.sh](installer/install.sh).
+```powershell
+# Windows (PowerShell, not as administrator)
+$env:VERSUM_NODE_KEY='llk_…'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.ps1 | iex
+```
 
-Then:
+Without the two variables the same line installs an unpaired node and its page asks for the key.
+
+What the line does, in order, and it says so as it goes: checks the OS, finds or downloads Node.js
+(checksum verified), finds a container runtime (and on macOS/Windows waits for Docker Desktop or
+OrbStack if you still have to install it), downloads this repository, installs a service that starts
+at boot (systemd system or user unit with linger on Linux, a launchd agent on macOS, a scheduled task
+on Windows that runs the node inside WSL), **starts it and opens the node's local page**:
+
+**`http://127.0.0.1:3311/`** — reachable from that machine only. Everything an owner does happens
+there: pair with the key, move the sliders for CPU, RAM and disk, switch the GPU, set the price per
+minute next to the market hint, choose hours, pause and resume, see earnings, reputation and the log.
+A root-owned Docker daemon is not used until you allow it once on that page (a container escape
+there would be root on the machine); rootless Podman needs no consent.
+
+Read the installers before you run them: [install.sh](install.sh) →
+[installer/install.sh](installer/install.sh) (Linux), [installer/install-macos.sh](installer/install-macos.sh),
+[install.ps1](install.ps1) (Windows).
+
+### The command line, if you prefer it
 
 ```bash
 versum-node scan                                   # what this machine has (nothing is sent)
-versum-node pair llk_…                             # the key from the site, "connect your computer"
+versum-node pair llk_… --hub=https://launchloop.suverse.io
 versum-node offer --cpu=4 --ram-gb=8 --price=0.02  # what you share, and your price per minute
 versum-node offer --windows="Mon-Fri 22:00-07:00, Sat-Sun 00:00-24:00"   # when (default: always)
-systemctl --user enable --now versum-node          # run it; loginctl enable-linger $USER keeps it up
-versum-node status                                 # your offer as the hub stores it, reputation, earnings
+versum-node start                                  # the service runs this; `versum-node open` shows the page
+versum-node status · on · off · doctor · prune
 ```
-
-`versum-node on` / `off` starts and stops taking jobs without touching your offer. The local status
-page is `http://127.0.0.1:3311/` (loopback only). `versum-node doctor` says what is missing.
 
 ## What the node shares
 

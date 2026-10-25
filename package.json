@@ -1,6 +1,6 @@
 {
   "name": "versum-node",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Share your computer's spare compute with the Versum network: scan the machine, choose what to share and a price per minute, run buyers' jobs in a wiped container, get paid in USDC on Base.",
   "type": "module",
   "license": "Apache-2.0",

@@ -10,7 +10,8 @@
  *                                          what you share, at what price, when — saved and sent to the hub
  *   versum-node on | off                   start / stop taking jobs (your offer stays)
  *   versum-node status                     the offer as the hub stores it + earnings
- *   versum-node start                      run the node (the systemd unit calls this)
+ *   versum-node start                      run the node (the service calls this); unpaired, it waits for the key on the local page
+ *   versum-node open                       print (and try to open) the local page http://127.0.0.1:3311/
  *   versum-node once                       one heartbeat, at most one job, exit
  *   versum-node run-local <manifest.json>  run a manifest without the hub (inputs by `path`); outputs stay in jobs/<id>/out
  *   versum-node prune                      remove leftover job containers and unused images
@@ -33,13 +34,14 @@ const out = (o) => process.stdout.write((typeof o === 'string' ? o : JSON.string
 async function main() {
   switch (cmd) {
     case 'scan': {
-      const rtd = await detectRuntime(loadConfig(home).runtime).catch(() => null)
+      const c0 = loadConfig(home)
+      const rtd = await detectRuntime(c0.runtime, { allowRootful: c0.allow_rootful === true }).catch(() => null)
       const r = await scan({ jobsDir: jobsDir(ensureHome(home)), runtime: rtd?.name ? rtd : null })
       out(flag('json') !== null ? r : renderScan(r)); return
     }
     case 'doctor': {
       const cfg = loadConfig(home)
-      const rtd = await detectRuntime(cfg.runtime)
+      const rtd = await detectRuntime(cfg.runtime, { allowRootful: cfg.allow_rootful === true })
       out(`runtime  ${rtd.name ? `${rtd.name} ${rtd.version} ${rtd.rootless ? 'rootless ✓' : 'ROOTFUL ✗'}` : 'none ✗'}`)
       for (const r of rtd.reasons) out(`         ${r}`)
       out(renderScan(await scan({ jobsDir: jobsDir(ensureHome(home)), runtime: rtd.name ? rtd : null })))
@@ -64,7 +66,7 @@ async function main() {
       Object.assign(cfg, patch, { share: { ...cfg.share, ...(patch.share ?? {}) } })
       saveConfig(cfg, home)
       if (!cfg.key) { out('saved locally; pair first to send it to the hub'); return }
-      const rtd = await detectRuntime(cfg.runtime)
+      const rtd = await detectRuntime(cfg.runtime, { allowRootful: cfg.allow_rootful === true })
       const res = await scan({ jobsDir: jobsDir(home), runtime: rtd.name ? rtd : null })
       const offer = await createHub({ baseUrl: cfg.hub, key: cfg.key, log }).setNode(offerFromConfig(cfg, res))
       out({ enabled: offer.enabled, price_per_minute_usd: offer.price_per_minute_usd, mobility: offer.mobility, share: offer.share, windows: offer.windows, window_open_now: offer.window_open_now })
@@ -85,14 +87,22 @@ async function main() {
     }
     case 'start': case 'once': {
       const cfg = loadConfig(home)
-      if (!cfg.key) throw new Error('not paired: versum-node pair <key>')
+      // stage 2: an unpaired node starts anyway and waits for the key on the local page (or VERSUM_NODE_KEY from the installer)
       await startNode({ home, cfg, log, once: cmd === 'once' }); return
+    }
+    case 'open': {
+      const url = `http://127.0.0.1:${process.env.VERSUM_NODE_HEALTH_PORT ?? 3311}/`
+      out(url)
+      const { spawn } = await import('node:child_process')
+      const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
+      try { spawn(opener, [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref() } catch { /* no desktop here: the URL above is the answer */ }
+      return
     }
     case 'run-local': {
       const file = rest.find((x) => !x.startsWith('--'))
       if (!file) throw new Error('usage: versum-node run-local <manifest.json>')
       const cfg = loadConfig(home); ensureHome(home)
-      const rtd = await detectRuntime(cfg.runtime)
+      const rtd = await detectRuntime(cfg.runtime, { allowRootful: cfg.allow_rootful === true })
       if (!rtd.ok) { for (const r of rtd.reasons) log(r); throw new Error('no usable runtime') }
       const manifest = validateManifest(readJsonFile(file))
       const raw = readJsonFile(file)
@@ -101,18 +111,21 @@ async function main() {
       out(r); process.exitCode = r.outcome === 'succeeded' ? 0 : 1; return
     }
     case 'prune': {
-      const rtd = await detectRuntime(loadConfig(home).runtime)
+      const c1 = loadConfig(home)
+      const rtd = await detectRuntime(c1.runtime, { allowRootful: c1.allow_rootful === true })
       if (!rtd.rt) throw new Error('no runtime')
       const n = await reapContainers(rtd.rt, log)
       const pruned = await rtd.rt.run(['image', 'prune', '-f']).catch((e) => e.message)
       out(`containers removed: ${n}\n${pruned}`); return
     }
-    case 'version': out('versum-node 0.1.0'); return
+    case 'version': out('versum-node 0.2.0'); return
     default:
       out(`versum-node — share your computer's spare compute by the minute
 
   scan · doctor · pair <key> · offer [--cpu= --ram-gb= --disk-gb= --gpu= --parallel= --max-job-minutes= --network= --price= --mobility= --windows=]
-  on · off · status · start · once · run-local <manifest.json> · prune · version
+  on · off · status · start · once · open · run-local <manifest.json> · prune · version
+
+After install nothing here is needed: the local page http://127.0.0.1:3311/ pairs, sets the share and the price, pauses, shows earnings and the log.
 
 Config: ${join(home, 'config.json')} (mode 600). Jobs run under ${jobsDir(home)} and are wiped.`)
       process.exitCode = cmd ? 1 : 0

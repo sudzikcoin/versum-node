@@ -1,0 +1,33 @@
+# Builds and publishes the standard Python image the hub pins by digest (stage 2f).
+#   ghcr.io/sudzikcoin/versum-python:3.12  (+ :3.12-<sha>)   linux/amd64 + linux/arm64
+# The digest to put in marketplace_config.python_image is printed in the job summary.
+name: python-image
+on:
+  push:
+    branches: [main]
+    paths: [images/python/**, .github/workflows/python-image.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: images/python
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/versum-python:3.12
+            ghcr.io/${{ github.repository_owner }}/versum-python:3.12-${{ github.sha }}
+      - name: Digest for the hub
+        run: |
+          echo "python_image = ghcr.io/${{ github.repository_owner }}/versum-python@${{ steps.build.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"

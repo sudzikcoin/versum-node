@@ -1,0 +1,28 @@
+# versum-node as a SYSTEM unit, installed by install.sh when it runs as root: /etc/systemd/system/versum-node.service
+# The node runs as the dedicated user `versum` (created by the installer, no login shell), never as root.
+[Unit]
+Description=Versum node — shares this computer's spare compute by the minute
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=versum
+Group=versum
+WorkingDirectory=/var/lib/versum-node
+ExecStart=/var/lib/versum-node/bin/versum-node start
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+# SIGTERM = drain: no new jobs, running ones finish (bounded by their time limit)
+TimeoutStopSec=3600
+Environment=VERSUM_NODE_HOME=/var/lib/versum-node
+EnvironmentFile=-/var/lib/versum-node/env
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/versum-node
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

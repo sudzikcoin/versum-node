@@ -35,6 +35,8 @@ test('detection parsers: nvidia-smi csv + header, the Win32_VideoController fall
   assert.deepEqual(vc, [{ vendor: 'nvidia', model: 'NVIDIA GeForce RTX 5070 Ti', vram_mb: null, driver: '32.0.15.7216' }])
   assert.deepEqual(parseVideoControllers(JSON.stringify({ Name: 'AMD Radeon RX 7800 XT', DriverVersion: '31.0.24027.1012', AdapterRAM: 2147483648 })), [{ vendor: 'amd', model: 'AMD Radeon RX 7800 XT', vram_mb: 2048, driver: '31.0.24027.1012' }])
   assert.deepEqual(parseVideoControllers('not json'), [])
+  // a VM's display adapter (the GitHub Windows runner) or any adapter of no known GPU vendor is not a GPU
+  assert.deepEqual(parseVideoControllers(JSON.stringify([{ Name: 'Microsoft Hyper-V Video', DriverVersion: '10.0.26100.1', AdapterRAM: 0 }, { Name: 'DisplayLink USB Device', DriverVersion: '1', AdapterRAM: 0 }])), [])
   assert.equal(vendorOf('Intel(R) UHD Graphics 770'), 'intel')
   assert.equal(describeGpu(rtx), 'NVIDIA GeForce RTX 5070 Ti · 15.9 GB · CUDA 12.8 · driver 572.16')
   assert.equal(describeGpu(gpuBlock(vc, null)), 'NVIDIA GeForce RTX 5070 Ti · no CUDA driver found · driver 32.0.15.7216')

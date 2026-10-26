@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { fitsNative, mapJobPath, nativeCommand, nativeEnv, sandboxProfile, cpuTimeToSeconds, parsePs, probeVerdict, dirSizeBytes, createNativeExecutor, findPython, detectNative } from '../lib/native.mjs'
+import { fitsNative, mapJobPath, nativeCommand, nativeEnv, sandboxProfile, cpuTimeToSeconds, parsePs, probeVerdict, dirSizeBytes, createNativeExecutor, findPython, detectNative, sandboxModeFor } from '../lib/native.mjs'
 import { runtimeOrder, makeExecutor } from '../lib/runtime.mjs'
 import { runAttempt } from '../lib/runner.mjs'
 import { validateManifest } from '../lib/manifest.mjs'
@@ -147,4 +147,14 @@ test('makeExecutor hands back the native executor for a native detection and ref
 
 test('the probe script is valid Python and the bundle entry parses', { skip: !sysPython }, () => {
   execFileSync(sysPython, ['-m', 'py_compile', join(root, 'probe', 'sandbox_probe.py')])
+})
+
+test('0.4.6: which Windows sandbox mode a manifest runs under — AppContainer for every CPU job, jobobject only for GPU jobs once the probe chose it, forced for a check', () => {
+  const cpu = { limits: { gpu: false } }, gpuJob = { limits: { gpu: true } }
+  assert.equal(sandboxModeFor(cpu, { sandbox: 'appcontainer', gpuMode: 'jobobject' }), 'appcontainer', 'a CPU job never leaves the AppContainer')
+  assert.equal(sandboxModeFor(gpuJob, { sandbox: 'appcontainer', gpuMode: 'jobobject' }), 'jobobject')
+  assert.equal(sandboxModeFor(gpuJob, { sandbox: 'appcontainer', gpuMode: 'appcontainer' }), 'appcontainer')
+  assert.equal(sandboxModeFor(gpuJob, { sandbox: 'appcontainer', gpuMode: null }), 'appcontainer', 'no verdict yet → AppContainer')
+  assert.equal(sandboxModeFor(cpu, { sandbox: 'appcontainer', forced: 'jobobject' }), 'jobobject', 'sandbox-check --mode=jobobject')
+  assert.equal(sandboxModeFor(gpuJob, { sandbox: 'seatbelt', gpuMode: 'jobobject' }), 'seatbelt', 'macOS has one sandbox')
 })

@@ -119,12 +119,26 @@ jobs:
           $env:VERSUM_NODE_HOME = "$PWD\home-check"
           & stage\versum-node.exe sandbox-check
           if ($LASTEXITCODE -ne 0) { throw "sandbox-check failed" }
+          # 0.4.6: the restricted-token Job Object mode (GPU fallback, docs/gpu-native.md 3b) — the runner is an administrator, so the
+          # one-time firewall rule can be added here; then the same probe must find every door shut in that mode too.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $fw = & stage\versum-sandbox.exe firewall-block --exe stage\python\python.exe; Write-Host "firewall-block: $fw"
+          if ($LASTEXITCODE -ne 0) { throw "firewall-block failed: $fw" }
+          $st = & stage\versum-sandbox.exe firewall-status --exe stage\python\python.exe; Write-Host "firewall-status: $st"
+          if ($st -notmatch '"blocked":true') { throw "the firewall rule is not in place: $st" }
+          & stage\versum-node.exe sandbox-check --mode=jobobject
+          if ($LASTEXITCODE -ne 0) { throw "sandbox-check --mode=jobobject failed" }
+          $global:LASTEXITCODE = 0
           # 0.4.4: the GPU probe through the real AppContainer with no GPU: the sandboxed interpreter must still write its result and the verdict is no_gpu (exit 2).
           # The expected non-zero exit must not end the step: pwsh 7 may turn it into a terminating error, and the step's last $LASTEXITCODE is the step's exit code.
           $PSNativeCommandUseErrorActionPreference = $false
           & stage\versum-node.exe gpu-check --force
           $code = $LASTEXITCODE; Write-Host "gpu-check --force exit $code"
           if ($code -ne 2) { throw "gpu-check --force must exit 2 (no GPU) on this runner, got $code" }
+          # 0.4.6: the same round trip through the restricted-token mode: the sandboxed interpreter must write its result there too
+          & stage\versum-node.exe gpu-check --force --mode=jobobject
+          $code = $LASTEXITCODE; Write-Host "gpu-check --force --mode=jobobject exit $code"
+          if ($code -ne 2) { throw "gpu-check --force --mode=jobobject must exit 2 (no GPU) on this runner, got $code" }
           $global:LASTEXITCODE = 0
       - name: Inno Setup → versum-node-setup.exe
         shell: pwsh

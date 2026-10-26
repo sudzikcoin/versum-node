@@ -1,4 +1,4 @@
-# GPU on native Windows nodes (0.4.4) — what is built, what is proven, what is still open
+# GPU on native Windows nodes (0.4.4 → 0.4.6) — what is built, what is proven, what is still open
 
 Status on 2026-10-26: shipped in **v0.4.4** (node) and hub migration `20261205001600_v1_gpu_native` (scheduler,
 mirrors, composer, GPU price, cabinet). Every part below is wired and released; the one thing nobody has seen yet is a
@@ -117,20 +117,33 @@ bare, fails inside — the first failing call and its error text are in the repo
 half even without a GPU, which is what CI does). `probe/gpu_probe.ps1` (ASCII-only, PowerShell 5.1) is the standalone
 version for a machine without the node installed.
 
-### 3b. Fallback if the AppContainer blocks the driver — designed, NOT built
-Ship a second sandbox mode in `versum-sandbox.exe` (`run --mode jobobject`): the same Job Object (memory ceiling, CPU
-cap, 64 processes, kill-on-close) around a process started with a **restricted token** (`CreateRestrictedToken`:
-`DISABLE_MAX_PRIVILEGE`, the owner's SID set deny-only for groups except the user, low integrity via
-`SetTokenInformation(TokenIntegrityLevel, S-1-16-4096)`), the job directory granted to the low-integrity label, the
-Python tree readable (it already is). No network: a low-integrity token still has a network stack, so the block is an
-**outbound firewall rule on the embedded python.exe path** (`netsh advfirewall firewall add rule … dir=out
-action=block program=<app>\python\python.exe`) — this is the one step that needs an administrator, once, at install
-(a UAC prompt in the installer, remembered by the rule itself), and it blocks the interpreter for CPU jobs too, which is
-correct: native jobs are offline by design. What this mode gives up against the AppContainer: the file system is "deny
-by integrity" (low-integrity may still READ most of the user's profile; `icacls` deny-ACEs on `%USERPROFILE%` for the
-low label close that at install), and it must be said on the local page. Decision rule: **AppContainer stays the
-sandbox for every CPU job regardless**; the Job Object mode would be used for GPU jobs only, and only if the probe
-says `blocked`. Which one ships is written here after the first real probe.
+### 3b. Fallback if the AppContainer blocks the driver — BUILT in 0.4.6, behind the verdict
+`versum-sandbox.exe run --mode jobobject`: the same Job Object (memory ceiling, CPU cap, 64 processes, kill-on-close)
+around a process started with a **restricted token** instead of an AppContainer — `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE,
+restricting SIDs = RESTRICTED S-1-5-12 + ALL APPLICATION PACKAGES S-1-15-2-1)`, lowered to **low integrity**
+(`SetTokenInformation(TokenIntegrityLevel, S-1-16-4096)`), started with `CreateProcessAsUser`. The process may touch
+only objects whose DACL grants one of the two restricting SIDs: the Python tree and the package folders already grant
+ALL APPLICATION PACKAGES (`grant-read`), the job directory is granted to RESTRICTED and labelled Low (`icacls
+/setintegritylevel (OI)(CI)L`) so the low-integrity process can write there and nowhere labelled medium; the user's
+profile grants neither SID. A restricted token still has a network stack, so the block is an **outbound firewall rule
+on the embedded python.exe** (`versum-sandbox.exe firewall-block --exe <python>` → `netsh advfirewall … dir=out
+action=block`): the one step that needs an administrator, once; the node starts it elevated (`Start-Process -Verb RunAs`,
+one UAC prompt on the owner's desktop) the first time the verdict is `jobobject_ok`, and GPU jobs wait until
+`firewall-status` says blocked. CPU jobs stay in the AppContainer regardless.
+
+What runs when: the probe (`lib/gpu-probe.mjs`) runs its sandboxed half through the AppContainer first; if that half
+says `blocked` (and the GPU set is not itself broken) it runs once more through an executor forced to `jobobject`
+mode. CUDA answering there gives the verdict **`jobobject_ok`** (the hub accepts it beside `appcontainer_ok` since
+migration `20261205001800`), the executor then uses `--mode jobobject` for GPU manifests (`sandboxModeFor`), and the
+local page says "works in restricted-token mode". `versum-node sandbox-check --mode=jobobject` and
+`versum-node gpu-check --force --mode=jobobject` exercise the mode by hand.
+
+Proven on CI (release.yml, Windows runner, no GPU): `firewall-block` + `firewall-status` → blocked; `sandbox-check
+--mode=jobobject` must find every door shut (network, loopback, users directory, writes outside the job directory)
+and the job's own out/ writable; `gpu-check --force --mode=jobobject` must exit 2 with the sandboxed interpreter having
+written its result. NOT proven: that the NVIDIA driver admits the restricted token where it refuses the AppContainer —
+that is exactly what the probe decides on the first machine with an NVIDIA GPU that reports `blocked`; no node has
+reported `blocked` yet (HP: `no_gpu`; the RTX 5070 Ti machine still runs 0.4.0 and has to be reinstalled once).
 
 ## 4. Hub (shipped: migration `20261205001600_v1_gpu_native`)
 

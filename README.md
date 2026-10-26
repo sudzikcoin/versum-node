@@ -7,7 +7,7 @@ connection), you choose how much of it to share, when, and at what price per min
 run inside a sandbox that is wiped when the job ends. The node never advertises "skills": it offers
 resources and time, nothing else.
 
-**Current release: v0.4.5** (2026-10-26). Windows 10/11 and macOS 12+ get a one-click installer; Linux
+**Current release: v0.4.6** (2026-10-26). Windows 10/11 and macOS 12+ get a one-click installer; Linux
 gets a one-line installer. Alpha: the first live job went end to end on 2026-10-25, and every release
 is proven on clean GitHub runners (install, pair, run a job inside the sandbox, update itself, uninstall)
 before it is published.
@@ -52,6 +52,7 @@ for the key. Read it before you run it: [install.sh](install.sh) → [installer/
 | 0.4.3 | **self-update**: the node hears about releases on the heartbeat and swaps itself when idle | yes |
 | 0.4.4 | GPU on native Windows nodes: detection, the cu128 wheel set, the in-sandbox probe, a GPU price | yes |
 | 0.4.5 | "Name this computer" on the local page (the name reaches the hub) | yes |
+| 0.4.6 | a fresh node shares **half** the machine by default; the restricted-token sandbox for GPU jobs when the AppContainer blocks the driver (`gpu_probe: jobobject_ok`) | yes |
 
 From 0.4.3 on, an installed Windows or macOS node updates itself: every heartbeat answer names the
 newest release and the sha256 of this platform's update bundle; the node downloads it in the background,
@@ -137,7 +138,14 @@ sandboxes do not do: [docs/native-sandbox.md](docs/native-sandbox.md). Threat mo
 - **The probe.** The node runs `probe/gpu_probe.py` on itself: once with the owner's token and once
   **inside the real AppContainer**, first the driver stage (`nvcuda.dll`, `cuInit`, a context) on first
   start, then the torch stage (a matmul on the device) once the set is in. The verdict goes to the hub as
-  `gpu_probe: appcontainer_ok | blocked | no_gpu` and to the page as "GPU in the sandbox: works | blocked".
+  `gpu_probe: appcontainer_ok | jobobject_ok | blocked | no_gpu` and to the page as "GPU in the sandbox: works |
+  works in restricted-token mode | blocked".
+- **If the AppContainer blocks the driver (0.4.6).** The probe runs its sandboxed half once more through
+  `versum-sandbox.exe run --mode jobobject`: the same Job Object around a **restricted, low-integrity token**
+  (restricting SIDs RESTRICTED + ALL APPLICATION PACKAGES, so it sees the Python tree and its job directory and
+  nothing of yours) with the interpreter blocked outbound by a firewall rule — the one step that needs
+  administrator rights, once; Windows asks when the verdict first comes back `jobobject_ok`. GPU jobs then run in
+  that mode; CPU jobs stay in the AppContainer. Details and what is and is not proven: `docs/gpu-native.md` 3b.
   The hub leases GPU pieces to a native node only with `gpu_packages = ok` **and** `gpu_probe =
   appcontainer_ok`. `versum-node gpu-check` runs it by hand (exit 0 works, 1 blocked, 2 no GPU).
 - **A separate price.** The page takes a price per GPU minute; the default suggestion and the hub's
@@ -152,7 +160,8 @@ the fallback design is written in [docs/gpu-native.md](docs/gpu-native.md) and n
 
 ## The local page
 
-- **What you share** — CPU cores, RAM and disk sliders (default: everything the scan found), the GPU box
+- **What you share** — CPU cores, RAM and disk sliders (0.4.6 default on a fresh node: half the cores, half
+  the RAM, the smaller of 1 GB and half the free disk; before 0.4.6: everything the scan found), the GPU box
   (shown only on an NVIDIA machine with a CUDA driver, or on a Linux container node), "jobs may use the
   internet" (Linux only; off by default), parallel jobs (default 1), the longest job you accept (default
   240 minutes), hours (default: always), a laptop that may vanish mid-job (`mobility`).
@@ -179,9 +188,12 @@ a web page in your browser cannot drive it.
 3. The node runs it and reports. The hub bills **actual minutes × your price per minute** on its own
    clock, to six decimals, never more than the cap. Your price is snapshotted at lease: repricing never
    changes a running job.
-4. The buyer accepts or rejects the result within a rating window (silence after the window = accepted).
-   On accept, **80 %** of the billed amount is written to your ledger at once; Versum keeps 20 %. A rejected
-   piece is not billed and the money returns to the buyer.
+4. **No free work** (hub rules since 2026-10-26). For a machine job the minutes are owed the moment your
+   attempt finishes with **exit 0 and at least one output file**: **80 %** of the billed amount is written to
+   your ledger right then, Versum keeps 20 %, and a buyer's Reject is a rating only. The hub refunds the buyer
+   by itself only on objective failure it sees (non-zero exit, exit 0 without output, timeout, node vanished),
+   and those runs are requeued on another node. For people and agent tools the result is held until the buyer
+   opens it; opening pays. The lease manifest tells you who you work for (`buyer`: reject rate, spend).
 5. Payouts go to the wallet you set in the cabinet on the site once your balance reaches **$1**. You need a
    wallet address; you do not need to hold any crypto to start.
 6. Your reputation is your ratings plus your completion rate. Nodes that drop or time out jobs get fewer

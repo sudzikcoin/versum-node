@@ -15,8 +15,8 @@
  *   versum-node once                       one heartbeat, at most one job, exit
  *   versum-node run-local <manifest.json>  run a manifest without the hub (inputs by `path`); outputs stay in jobs/<id>/out
  *   versum-node prune                      remove leftover job containers and unused images
- *   versum-node sandbox-check              run the probe script in this machine's sandbox and say what it could NOT do
- *   versum-node gpu-check [--force]        0.4.4: does CUDA work inside the sandbox here? exit 0 works · 1 blocked · 2 no GPU
+ *   versum-node sandbox-check [--mode=jobobject]   run the probe script in this machine's sandbox and say what it could NOT do
+ *   versum-node gpu-check [--force] [--mode=jobobject]   0.4.4: does CUDA work inside the sandbox here? exit 0 works (AppContainer, or 0.4.6 restricted-token) · 1 blocked · 2 no GPU
  *   versum-node version
  */
 import { join } from 'node:path'
@@ -126,8 +126,11 @@ async function main() {
       const cfg = loadConfig(home); ensureHome(home)
       const rtd = await detectRuntime(cfg.runtime, { allowRootful: cfg.allow_rootful === true, appRoot: APP_ROOT })
       if (!rtd.ok) { for (const r of rtd.reasons) log(r); throw new Error('no usable runtime') }
-      const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log })
+      // 0.4.6: --mode=jobobject checks the restricted-token sandbox (Windows), the mode GPU jobs use when the AppContainer blocks the driver
+      const mode = flag('mode') === 'jobobject' ? 'jobobject' : null
+      const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log, mode })
       await exec.ensureGrants()
+      if (mode === 'jobobject') { const fw = await exec.firewallStatus(); out(`firewall: interpreter outbound ${fw.blocked === true ? 'BLOCKED (rule present)' : fw.blocked === false ? 'NOT blocked — run versum-sandbox.exe firewall-block --exe <python.exe> as administrator' : 'n/a'}`) }
       const probe = join(APP_ROOT, 'probe', 'sandbox_probe.py')
       const id = (globalThis.crypto ?? (await import('node:crypto')).webcrypto).randomUUID()
       const manifest = validateManifest({ attempt_id: id, piece_id: id, job_id: id, kind: 'python', image: 'ghcr.io/sudzikcoin/versum-python@sha256:' + 'f'.repeat(64), command: ['python', '/job/in/sandbox_probe.py'], env: {}, args: { probe: true }, limits: { cpu_cores: 1, ram_mb: 512, disk_mb: 256, gpu: false, network: false, time_limit_minutes: 2 }, inputs: [{ name: 'sandbox_probe.py', url: 'https://localhost/probe', size_bytes: 0 }], price_per_minute_usd: 0 })
@@ -136,7 +139,7 @@ async function main() {
       let result = null
       try { result = JSON.parse((await import('node:fs')).readFileSync(join(r.job_dir, 'out', 'result.json'), 'utf8')) } catch {}
       const v = probeVerdict(result)
-      out({ runtime: describeRuntime(rtd), outcome: r.outcome, exit_code: r.exit_code, result, sandbox_ok: v.ok, failures: v.failures, stderr_tail: r.stderr_tail })
+      out({ runtime: describeRuntime(rtd), mode: mode ?? rtd.sandbox, outcome: r.outcome, exit_code: r.exit_code, result, sandbox_ok: v.ok, failures: v.failures, stderr_tail: r.stderr_tail })
       try { (await import('node:fs')).rmSync(r.job_dir, { recursive: true, force: true }) } catch {}
       process.exitCode = r.outcome === 'succeeded' && v.ok ? 0 : 1; return
     }
@@ -153,17 +156,20 @@ async function main() {
       let gpu = res.gpu
       out(`gpu      ${gpu?.model ? `${gpu.model} · ${gpu.vram_mb ?? '?'} MB · CUDA ${gpu.cuda ?? 'none'} · driver ${gpu.driver ?? '?'}` : 'none'}`)
       if (has('force') && !gpu?.cuda) gpu = { ...gpu, vendor: 'nvidia', model: gpu?.model ?? '(no GPU — forced run)', cuda: gpu?.cuda ?? '0.0' }
-      const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log })
+      const forcedMode = flag('mode') === 'jobobject' ? 'jobobject' : null
+      const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log, mode: forcedMode })
       await exec.ensureGrants()
+      // 0.4.6: the restricted-token fallback runs when the AppContainer half says blocked (or always, with --mode=jobobject)
+      const fallbackExec = rtd.sandbox === 'appcontainer' && !forcedMode ? makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log, mode: 'jobobject' }) : null
       // the torch stage when the GPU set is already unpacked here (the marker lib/pylib-gpu.mjs writes), the driver stage otherwise
       const gpuDir = join(stateDir(home), PYLIB_GPU_DIR)
       let stamp = null; try { stamp = JSON.parse(readFileSync(join(gpuDir, MARKER), 'utf8')).stamp } catch {}
       const stage = stamp ? 'torch' : 'driver'
       const pylibDir = join(stateDir(home), 'pylib')
-      const r = await runGpuProbe({ home, appRoot: APP_ROOT, stateDir: stateDir(home), gpu, stage, exec, pythonExe: rtd.python.exe, pythonDir: rtd.python.dir, pylibDir: existsSync(pylibDir) ? pylibDir : null, gpuDir: stamp ? gpuDir : null, stamp, log, force: true, nodeVersion: NODE_VERSION })
+      const r = await runGpuProbe({ home, appRoot: APP_ROOT, stateDir: stateDir(home), gpu, stage, exec, fallbackExec, pythonExe: rtd.python.exe, pythonDir: rtd.python.dir, pylibDir: existsSync(pylibDir) ? pylibDir : null, gpuDir: stamp ? gpuDir : null, stamp, log, force: true, nodeVersion: NODE_VERSION })
       out({ stage: r.stage, verdict: r.verdict, detail: r.detail, sandbox_exit: r.sandbox_exit ?? null, bare: r.bare && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.bare[k] ? { ok: r.bare[k].ok, error: r.bare[k].error ?? null } : null])), sandboxed: r.sandboxed && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.sandboxed[k] ? { ok: r.sandboxed[k].ok, error: r.sandboxed[k].error ?? null } : null])), report: join(stateDir(home), 'gpu-probe.json') })
       if (has('force') && !r.sandboxed) { out('FAIL: the sandboxed interpreter wrote no result — the probe did not run inside the sandbox at all'); process.exitCode = 1; return }
-      process.exitCode = r.verdict === 'appcontainer_ok' ? 0 : r.verdict === 'no_gpu' ? 2 : 1; return
+      process.exitCode = r.verdict === 'appcontainer_ok' || r.verdict === 'jobobject_ok' ? 0 : r.verdict === 'no_gpu' ? 2 : 1; return
     }
     case 'prune': {
       const c1 = loadConfig(home)

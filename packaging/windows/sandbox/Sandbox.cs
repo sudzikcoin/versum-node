@@ -20,6 +20,16 @@
 //       5. Waits. Every second it writes <meta> = {"cpu_seconds","peak_memory_mb","processes"} from the job's
 //          accounting. At --timeout-s it terminates the job (exit 124). Exits with the child's exit code.
 //       6. Deletes nothing itself: the node calls `delete --name` after the directory is wiped.
+//   versum-sandbox.exe run --mode jobobject … (0.4.6 — GPU jobs only, and only when the AppContainer probe said `blocked`)
+//       The same Job Object around a process started with a RESTRICTED TOKEN instead of an AppContainer:
+//       CreateRestrictedToken(DISABLE_MAX_PRIVILEGE, restricting SIDs = RESTRICTED + ALL APPLICATION PACKAGES) — the
+//       process may touch only objects whose DACL grants one of those two (the Python tree and the job directory are
+//       granted; the user's profile grants neither) — lowered to LOW integrity (no write to anything labelled medium);
+//       the job directory is labelled Low and granted to RESTRICTED. A restricted token still has a network stack, so
+//       `firewall-block` (below, administrator, once) blocks the embedded interpreter outbound. What this mode gives
+//       up against the AppContainer is the object namespace isolation; what it may give back is the driver's door.
+//   versum-sandbox.exe firewall-block --exe <python.exe>     (administrator) outbound block rule for the interpreter, idempotent
+//   versum-sandbox.exe firewall-status --exe <python.exe>    {"blocked":true|false}
 //   versum-sandbox.exe delete --name <profile>
 //       DeleteAppContainerProfile — the SID is gone, the ACL entries on the (already deleted) directory with it.
 //   versum-sandbox.exe cleanup --list <file>
@@ -102,6 +112,26 @@ static class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool TerminateJobObject(IntPtr hJob, uint uExitCode);
 
+    // 0.4.6 restricted token
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool CreateRestrictedToken(IntPtr ExistingTokenHandle, uint Flags, uint DisableSidCount, IntPtr SidsToDisable, uint DeletePrivilegeCount, IntPtr PrivilegesToDelete, uint RestrictedSidCount, IntPtr SidsToRestrict, out IntPtr NewTokenHandle);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool SetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, IntPtr TokenInformation, uint TokenInformationLength);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool ConvertStringSidToSid(string StringSid, out IntPtr ptrSid);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateProcessAsUser(IntPtr hToken, string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFOEX lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr LocalFree(IntPtr hMem);
+    public const uint TOKEN_ALL_ACCESS = 0xF01FF, DISABLE_MAX_PRIVILEGE = 0x1, SE_GROUP_INTEGRITY = 0x20;
+    public const int TokenIntegrityLevel = 25;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SID_AND_ATTRIBUTES { public IntPtr Sid; public uint Attributes; }
+
     public const int JobObjectBasicAccountingInformation = 1, JobObjectExtendedLimitInformation = 9, JobObjectCpuRateControlInformation = 15;
     public const uint JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x8, JOB_OBJECT_LIMIT_JOB_MEMORY = 0x200, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
     public const uint JOB_OBJECT_CPU_RATE_CONTROL_ENABLE = 0x1, JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP = 0x4;
@@ -139,12 +169,14 @@ static class Program
     {
         try
         {
-            if (args.Length == 0) { Console.Error.WriteLine("usage: versum-sandbox probe | grant-read --dir D | run --name N --dir D --memory-mb M --cpu-cores C --timeout-s T --meta F -- exe args… | delete --name N | cleanup --list F"); return 2; }
+            if (args.Length == 0) { Console.Error.WriteLine("usage: versum-sandbox probe | grant-read --dir D | run [--mode appcontainer|jobobject] --name N --dir D --memory-mb M --cpu-cores C --timeout-s T --meta F -- exe args… | firewall-block --exe P | firewall-status --exe P | delete --name N | cleanup --list F"); return 2; }
             switch (args[0])
             {
                 case "probe": return Probe();
                 case "grant-read": return GrantRead(Opt(args, "--dir"));
                 case "run": return Run(args);
+                case "firewall-block": return Firewall(Opt(args, "--exe"), true);
+                case "firewall-status": return Firewall(Opt(args, "--exe"), false);
                 case "delete": return Delete(Opt(args, "--name"));
                 case "cleanup": return Cleanup(Opt(args, "--list"));
                 default: Console.Error.WriteLine("unknown command " + args[0]); return 2;
@@ -157,6 +189,72 @@ static class Program
     {
         for (int i = 1; i + 1 < args.Length; i++) { if (args[i] == "--") break; if (args[i] == name) return args[i + 1]; }
         throw new ArgumentException(name + " is required");
+    }
+    static string OptOr(string[] args, string name, string dflt)
+    {
+        for (int i = 1; i + 1 < args.Length; i++) { if (args[i] == "--") break; if (args[i] == name) return args[i + 1]; }
+        return dflt;
+    }
+
+    // ── 0.4.6: the outbound firewall rule for the embedded interpreter (restricted-token mode has a network stack) ──
+    const string RULE = "versum-node: no network for the job interpreter";
+    static bool IsAdmin() { try { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); } catch { return false; } }
+    static string Netsh(string argsLine, out int code)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("netsh", argsLine) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        using (var p = System.Diagnostics.Process.Start(psi)) { string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd(); p.WaitForExit(60000); code = p.ExitCode; return o; }
+    }
+    static int Firewall(string exe, bool add)
+    {
+        string full = Path.GetFullPath(exe);
+        int code;
+        string show = Netsh("advfirewall firewall show rule name=\"" + RULE + "\" verbose", out code);
+        bool present = code == 0 && show.IndexOf(full, StringComparison.OrdinalIgnoreCase) >= 0 && show.IndexOf("Block", StringComparison.OrdinalIgnoreCase) >= 0;
+        if (!add) { Console.Out.WriteLine("{\"blocked\":" + (present ? "true" : "false") + ",\"rule\":" + Json(RULE) + ",\"exe\":" + Json(full) + "}"); return present ? 0 : 1; }
+        if (present) { Console.Out.WriteLine("{\"blocked\":true,\"changed\":false}"); return 0; }
+        if (!IsAdmin()) { Console.Out.WriteLine("{\"blocked\":false,\"error\":\"administrator rights are needed once to add the firewall rule\"}"); return 5; }
+        Netsh("advfirewall firewall delete rule name=\"" + RULE + "\"", out code);   // a stale rule for an older path
+        string outp = Netsh("advfirewall firewall add rule name=\"" + RULE + "\" dir=out action=block program=\"" + full + "\" enable=yes profile=any", out code);
+        if (code != 0) { Console.Out.WriteLine("{\"blocked\":false,\"error\":" + Json(outp.Trim()) + "}"); return 1; }
+        Say("firewall: outbound traffic of " + full + " is blocked (" + RULE + ")");
+        Console.Out.WriteLine("{\"blocked\":true,\"changed\":true}");
+        return 0;
+    }
+
+    // ── 0.4.6: the restricted, low-integrity token (restricting SIDs: RESTRICTED + ALL APPLICATION PACKAGES) ──
+    static IntPtr RestrictedToken()
+    {
+        IntPtr tok;
+        if (!Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TOKEN_ALL_ACCESS, out tok)) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcessToken failed");
+        IntPtr sidRestricted, sidAap;
+        if (!Native.ConvertStringSidToSid("S-1-5-12", out sidRestricted)) throw new Win32Exception();
+        if (!Native.ConvertStringSidToSid("S-1-15-2-1", out sidAap)) throw new Win32Exception();
+        var arr = new Native.SID_AND_ATTRIBUTES[] { new Native.SID_AND_ATTRIBUTES { Sid = sidRestricted, Attributes = 0 }, new Native.SID_AND_ATTRIBUTES { Sid = sidAap, Attributes = 0 } };
+        int one = Marshal.SizeOf(typeof(Native.SID_AND_ATTRIBUTES));
+        IntPtr p = Marshal.AllocHGlobal(one * arr.Length);
+        for (int i = 0; i < arr.Length; i++) Marshal.StructureToPtr(arr[i], (IntPtr)((long)p + i * one), false);
+        IntPtr restricted;
+        bool ok = Native.CreateRestrictedToken(tok, Native.DISABLE_MAX_PRIVILEGE, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)arr.Length, p, out restricted);
+        int err = Marshal.GetLastWin32Error();
+        Marshal.FreeHGlobal(p); Native.LocalFree(sidRestricted); Native.LocalFree(sidAap); Native.CloseHandle(tok);
+        if (!ok) throw new Win32Exception(err, "CreateRestrictedToken failed");
+        // low integrity: S-1-16-4096
+        IntPtr low;
+        if (!Native.ConvertStringSidToSid("S-1-16-4096", out low)) throw new Win32Exception();
+        var label = new Native.SID_AND_ATTRIBUTES { Sid = low, Attributes = Native.SE_GROUP_INTEGRITY };
+        IntPtr lp = Marshal.AllocHGlobal(one);
+        Marshal.StructureToPtr(label, lp, false);
+        ok = Native.SetTokenInformation(restricted, Native.TokenIntegrityLevel, lp, (uint)one);
+        err = Marshal.GetLastWin32Error();
+        Marshal.FreeHGlobal(lp); Native.LocalFree(low);
+        if (!ok) throw new Win32Exception(err, "SetTokenInformation(TokenIntegrityLevel) failed");
+        return restricted;
+    }
+    static void LabelLow(string dir)
+    {
+        // a low-integrity process may write only into objects labelled Low: icacls ships with every Windows
+        var psi = new System.Diagnostics.ProcessStartInfo("icacls", "\"" + dir + "\" /setintegritylevel (OI)(CI)L") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        using (var pr = System.Diagnostics.Process.Start(psi)) { string o = pr.StandardOutput.ReadToEnd() + pr.StandardError.ReadToEnd(); pr.WaitForExit(60000); if (pr.ExitCode != 0) throw new Exception("icacls /setintegritylevel failed: " + o.Trim()); }
     }
 
     // ── the AppContainer SID (created, or derived when the profile already exists) ──
@@ -251,7 +349,8 @@ static class Program
 
     static int Run(string[] args)
     {
-        string name = Opt(args, "--name"), dir = Opt(args, "--dir"), metaFile = Opt(args, "--meta");
+        string name = Opt(args, "--name"), dir = Opt(args, "--dir"), metaFile = Opt(args, "--meta"), mode = OptOr(args, "--mode", "appcontainer");
+        if (mode != "appcontainer" && mode != "jobobject") throw new ArgumentException("--mode must be appcontainer or jobobject");
         int memoryMb = int.Parse(Opt(args, "--memory-mb")), cores = int.Parse(Opt(args, "--cpu-cores")), timeoutS = int.Parse(Opt(args, "--timeout-s"));
         int dash = Array.IndexOf(args, "--");
         if (dash < 0 || dash + 1 >= args.Length) throw new ArgumentException("-- <exe> <args…> is required");
@@ -259,16 +358,28 @@ static class Program
         Array.Copy(args, dash + 1, cmd, 0, cmd.Length);
         if (!Directory.Exists(dir)) throw new DirectoryNotFoundException(dir);
 
-        // 1 — the profile
-        IntPtr sid = ProfileSid(name, true);
-        var sidObj = new SecurityIdentifier(sid);
-        Say("AppContainer " + name + " = " + sidObj.Value + " (no capabilities)");
+        // 1 — the identity: an AppContainer profile, or (0.4.6, --mode jobobject) a restricted low-integrity token
+        IntPtr sid = IntPtr.Zero, token = IntPtr.Zero;
+        SecurityIdentifier sidObj;
+        if (mode == "appcontainer")
+        {
+            sid = ProfileSid(name, true);
+            sidObj = new SecurityIdentifier(sid);
+            Say("AppContainer " + name + " = " + sidObj.Value + " (no capabilities)");
+        }
+        else
+        {
+            token = RestrictedToken();
+            sidObj = new SecurityIdentifier("S-1-5-12");   // RESTRICTED: what the job directory is granted to
+            Say("restricted token: RESTRICTED + ALL APPLICATION PACKAGES, low integrity, no privileges");
+        }
 
         // 2 — the one place it may write
         var di = new DirectoryInfo(dir);
         var acl = di.GetAccessControl();
         acl.AddAccessRule(new FileSystemAccessRule(sidObj, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         di.SetAccessControl(acl);
+        if (mode == "jobobject") LabelLow(dir);
 
         // 3 — the job object
         IntPtr job = Native.CreateJobObject(IntPtr.Zero, null);
@@ -285,17 +396,21 @@ static class Program
         Say("job object: memory " + memoryMb + " MB, cpu " + cores + "/" + machineCores + " cores (" + (rate / 100.0) + "%), 64 processes, kill on close");
 
         // 4 — the process
-        var sc = new Native.SECURITY_CAPABILITIES { AppContainerSid = sid, Capabilities = IntPtr.Zero, CapabilityCount = 0, Reserved = 0 };
-        IntPtr scPtr = Marshal.AllocHGlobal(Marshal.SizeOf(sc));
-        Marshal.StructureToPtr(sc, scPtr, false);
-        IntPtr size = IntPtr.Zero;
-        Native.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
-        IntPtr list = Marshal.AllocHGlobal(size);
-        if (!Native.InitializeProcThreadAttributeList(list, 1, 0, ref size)) throw new Win32Exception();
-        if (!Native.UpdateProcThreadAttribute(list, 0, Native.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, scPtr, (IntPtr)Marshal.SizeOf(sc), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+        IntPtr scPtr = IntPtr.Zero, list = IntPtr.Zero;
+        if (mode == "appcontainer")
+        {
+            var sc = new Native.SECURITY_CAPABILITIES { AppContainerSid = sid, Capabilities = IntPtr.Zero, CapabilityCount = 0, Reserved = 0 };
+            scPtr = Marshal.AllocHGlobal(Marshal.SizeOf(sc));
+            Marshal.StructureToPtr(sc, scPtr, false);
+            IntPtr size = IntPtr.Zero;
+            Native.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+            list = Marshal.AllocHGlobal(size);
+            if (!Native.InitializeProcThreadAttributeList(list, 1, 0, ref size)) throw new Win32Exception();
+            if (!Native.UpdateProcThreadAttribute(list, 0, Native.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, scPtr, (IntPtr)Marshal.SizeOf(sc), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
+        }
 
         var siex = new Native.STARTUPINFOEX();
-        siex.StartupInfo.cb = Marshal.SizeOf(siex);
+        siex.StartupInfo.cb = mode == "appcontainer" ? Marshal.SizeOf(siex) : Marshal.SizeOf(typeof(Native.STARTUPINFO));
         siex.StartupInfo.dwFlags = Native.STARTF_USESTDHANDLES;
         siex.StartupInfo.hStdInput = Native.GetStdHandle(Native.STD_INPUT_HANDLE);
         siex.StartupInfo.hStdOutput = Native.GetStdHandle(Native.STD_OUTPUT_HANDLE);
@@ -307,14 +422,18 @@ static class Program
         foreach (var a in cmd) { if (cl.Length > 0) cl.Append(' '); cl.Append(Quote(a)); }
         IntPtr envBlock = EnvironmentBlock();
         Native.PROCESS_INFORMATION pi;
-        uint flags = Native.EXTENDED_STARTUPINFO_PRESENT | Native.CREATE_SUSPENDED | Native.CREATE_UNICODE_ENVIRONMENT | Native.CREATE_NO_WINDOW;
-        bool ok = Native.CreateProcess(null, cl, IntPtr.Zero, IntPtr.Zero, true, flags, envBlock, dir, ref siex, out pi);
+        uint flags = Native.CREATE_SUSPENDED | Native.CREATE_UNICODE_ENVIRONMENT | Native.CREATE_NO_WINDOW | (mode == "appcontainer" ? Native.EXTENDED_STARTUPINFO_PRESENT : 0);
+        bool ok = mode == "appcontainer"
+            ? Native.CreateProcess(null, cl, IntPtr.Zero, IntPtr.Zero, true, flags, envBlock, dir, ref siex, out pi)
+            : Native.CreateProcessAsUser(token, null, cl, IntPtr.Zero, IntPtr.Zero, true, flags, envBlock, dir, ref siex, out pi);
         if (!ok)
         {
             int err = Marshal.GetLastWin32Error();
             // a process already inside a job may not be able to nest: retry with breakaway (the node's own job, if any)
-            if (err == 5 /*ERROR_ACCESS_DENIED*/) ok = Native.CreateProcess(null, cl, IntPtr.Zero, IntPtr.Zero, true, flags | Native.CREATE_BREAKAWAY_FROM_JOB, envBlock, dir, ref siex, out pi);
-            if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess in AppContainer failed");
+            if (err == 5 /*ERROR_ACCESS_DENIED*/) ok = mode == "appcontainer"
+                ? Native.CreateProcess(null, cl, IntPtr.Zero, IntPtr.Zero, true, flags | Native.CREATE_BREAKAWAY_FROM_JOB, envBlock, dir, ref siex, out pi)
+                : Native.CreateProcessAsUser(token, null, cl, IntPtr.Zero, IntPtr.Zero, true, flags | Native.CREATE_BREAKAWAY_FROM_JOB, envBlock, dir, ref siex, out pi);
+            if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), mode == "appcontainer" ? "CreateProcess in AppContainer failed" : "CreateProcessAsUser with the restricted token failed");
         }
         if (!Native.AssignProcessToJobObject(job, pi.hProcess)) { int err = Marshal.GetLastWin32Error(); Native.TerminateJobObject(job, 1); throw new Win32Exception(err, "AssignProcessToJobObject failed"); }
         Native.ResumeThread(pi.hThread);
@@ -339,9 +458,11 @@ static class Program
         Say("exit " + exit + (timedOut ? " (time limit)" : "") + " after " + Math.Round((DateTime.UtcNow - t0).TotalSeconds, 1) + " s");
         Native.CloseHandle(pi.hProcess);
         Native.CloseHandle(job);
-        Native.DeleteProcThreadAttributeList(list);
-        Marshal.FreeHGlobal(list); Marshal.FreeHGlobal(scPtr); Marshal.FreeHGlobal(envBlock);
-        Native.FreeSid(sid);
+        if (list != IntPtr.Zero) { Native.DeleteProcThreadAttributeList(list); Marshal.FreeHGlobal(list); }
+        if (scPtr != IntPtr.Zero) Marshal.FreeHGlobal(scPtr);
+        Marshal.FreeHGlobal(envBlock);
+        if (sid != IntPtr.Zero) Native.FreeSid(sid);
+        if (token != IntPtr.Zero) Native.CloseHandle(token);
         return timedOut ? 124 : (int)exit;
     }
 

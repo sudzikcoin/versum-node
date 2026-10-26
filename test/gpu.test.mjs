@@ -218,7 +218,7 @@ test('ensureGpuGrants: grant-read on our folder once per stamp; the driver folde
 })
 
 /* ───────────── the sandbox probe the node runs on itself (lib/gpu-probe.mjs) ───────────── */
-import { probeVerdict, describeGpuProbe, probeManifest, runGpuProbe, PROBE_FILE } from '../lib/gpu-probe.mjs'
+import { probeVerdict, describeGpuProbe, probeManifest, runGpuProbe, PROBE_FILE, VERDICTS } from '../lib/gpu-probe.mjs'
 import { createNativeExecutor, fitsNative, nativeCommand } from '../lib/native.mjs'
 import { runAttempt } from '../lib/runner.mjs'
 import { validateManifest } from '../lib/manifest.mjs'
@@ -301,4 +301,17 @@ test('a GPU job gets the GPU environment through the real executor (no sandbox):
   assert.equal(exec.gpuReady(), false)
   const r2 = await runAttempt({ manifest: m, share: { gpu: true }, exec, home, log: () => {}, local: true })
   assert.equal(r2.outcome, 'failed'); assert.match(r2.failure_reason, /no ready GPU package set/)
+})
+
+test('0.4.6: the restricted-token fallback — the same comparison with mode jobobject answers jobobject_ok, and the page says so', () => {
+  const gpu = { vendor: 'nvidia', model: 'RTX 5070 Ti', cuda: '12.8', count: 1 }
+  const bare = { nvcuda: { ok: true, name: 'RTX 5070 Ti', driver_cuda: '12.8' } }
+  const blocked = probeVerdict({ gpu, stage: 'driver', bare, sandboxed: { nvcuda: { ok: false, error: 'CUDA_ERROR_NO_DEVICE' } } })
+  assert.equal(blocked.verdict, 'blocked'); assert.match(blocked.detail, /inside the AppContainer/)
+  const jo = probeVerdict({ gpu, stage: 'driver', bare, sandboxed: bare, mode: 'jobobject' })
+  assert.equal(jo.verdict, 'jobobject_ok'); assert.match(jo.detail, /inside the restricted-token sandbox/)
+  assert.equal(probeVerdict({ gpu, stage: 'driver', bare, sandboxed: null, sandboxExit: 1, mode: 'jobobject' }).verdict, 'blocked')
+  assert.match(describeGpuProbe({ verdict: 'jobobject_ok', detail: 'x', firewall: true }), /works in restricted-token mode/)
+  assert.match(describeGpuProbe({ verdict: 'jobobject_ok', detail: 'x', firewall: false }), /WAITING for the one-time firewall rule/)
+  assert.ok(VERDICTS.includes('jobobject_ok'))
 })

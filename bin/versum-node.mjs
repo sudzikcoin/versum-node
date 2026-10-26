@@ -33,6 +33,8 @@ import { log } from '../lib/log.mjs'
 
 const [cmd, ...rest] = process.argv.slice(2)
 const flag = (name) => { const a = rest.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : null }
+/** a bare switch: `--force` (0.4.4) */
+const has = (name) => rest.includes(`--${name}`) || flag(name) !== null
 const home = nodeHome()
 const out = (o) => process.stdout.write((typeof o === 'string' ? o : JSON.stringify(o, null, 2)) + '\n')
 
@@ -150,7 +152,7 @@ async function main() {
       const res = await scan({ jobsDir: jobsDir(home), runtime: rtd })
       let gpu = res.gpu
       out(`gpu      ${gpu?.model ? `${gpu.model} · ${gpu.vram_mb ?? '?'} MB · CUDA ${gpu.cuda ?? 'none'} · driver ${gpu.driver ?? '?'}` : 'none'}`)
-      if (flag('force') !== null && !gpu?.cuda) gpu = { ...gpu, vendor: 'nvidia', model: gpu?.model ?? '(no GPU — forced run)', cuda: gpu?.cuda ?? '0.0' }
+      if (has('force') && !gpu?.cuda) gpu = { ...gpu, vendor: 'nvidia', model: gpu?.model ?? '(no GPU — forced run)', cuda: gpu?.cuda ?? '0.0' }
       const exec = makeExecutor(rtd, { home, egressDir: join(APP_ROOT, 'egress'), log })
       await exec.ensureGrants()
       // the torch stage when the GPU set is already unpacked here (the marker lib/pylib-gpu.mjs writes), the driver stage otherwise
@@ -160,7 +162,7 @@ async function main() {
       const pylibDir = join(stateDir(home), 'pylib')
       const r = await runGpuProbe({ home, appRoot: APP_ROOT, stateDir: stateDir(home), gpu, stage, exec, pythonExe: rtd.python.exe, pythonDir: rtd.python.dir, pylibDir: existsSync(pylibDir) ? pylibDir : null, gpuDir: stamp ? gpuDir : null, stamp, log, force: true, nodeVersion: NODE_VERSION })
       out({ stage: r.stage, verdict: r.verdict, detail: r.detail, sandbox_exit: r.sandbox_exit ?? null, bare: r.bare && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.bare[k] ? { ok: r.bare[k].ok, error: r.bare[k].error ?? null } : null])), sandboxed: r.sandboxed && Object.fromEntries(['nvcuda', 'torch', 'cupy', 'numba'].map((k) => [k, r.sandboxed[k] ? { ok: r.sandboxed[k].ok, error: r.sandboxed[k].error ?? null } : null])), report: join(stateDir(home), 'gpu-probe.json') })
-      if (flag('force') !== null && !r.sandboxed) { out('FAIL: the sandboxed interpreter wrote no result — the probe did not run inside the sandbox at all'); process.exitCode = 1; return }
+      if (has('force') && !r.sandboxed) { out('FAIL: the sandboxed interpreter wrote no result — the probe did not run inside the sandbox at all'); process.exitCode = 1; return }
       process.exitCode = r.verdict === 'appcontainer_ok' ? 0 : r.verdict === 'no_gpu' ? 2 : 1; return
     }
     case 'prune': {

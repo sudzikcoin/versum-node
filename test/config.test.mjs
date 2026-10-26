@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, statSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { offerPatchFromArgs, parseWindowsText, saveConfig, loadConfig, DEFAULT_CONFIG, redactConfig } from '../lib/config.mjs'
+import { offerPatchFromArgs, parseWindowsText, saveConfig, loadConfig, DEFAULT_CONFIG, redactConfig, defaultShare, applyDefaultShare } from '../lib/config.mjs'
 import { windowOpen, offerFromConfig } from '../lib/node.mjs'
 import { createPulse } from '../lib/pulse.mjs'
 import { createAdmission } from '../lib/admission.mjs'
@@ -74,4 +74,21 @@ test('outcome words', () => {
   assert.equal(outcomeOf({ exitCode: 1, timedOut: false, stalled: false }), 'failed')
   assert.equal(outcomeOf({ exitCode: 137, timedOut: true, stalled: false }), 'timeout')
   assert.equal(outcomeOf({ exitCode: 137, timedOut: false, stalled: true }), 'failed')
+})
+
+test('0.4.6: a fresh node shares half the machine — half the cores, half the RAM, min(1 GB, half the free disk), one job at a time', () => {
+  assert.deepEqual(defaultShare({ cpu_cores: 8, ram_mb: 16384, disk_free_mb: 120000 }), { cpu_cores: 4, ram_mb: 8192, disk_mb: 1024, max_parallel_jobs: 1 })
+  assert.deepEqual(defaultShare({ cpu_cores: 1, ram_mb: 900, disk_free_mb: 1500 }), { cpu_cores: 1, ram_mb: 512, disk_mb: 750, max_parallel_jobs: 1 }, 'floors: 1 core, 512 MB; disk = half of 1.5 GB')
+  assert.deepEqual(defaultShare({ cpu_cores: 3, ram_mb: 7800, disk_free_mb: 300 }), { cpu_cores: 1, ram_mb: 3900, disk_mb: 256, max_parallel_jobs: 1 }, 'odd cores floor; disk never below 256 MB')
+  assert.deepEqual(defaultShare(null), { cpu_cores: null, ram_mb: null, disk_mb: null, max_parallel_jobs: 1 }, 'no scan → nothing decided')
+  const fresh = { ...DEFAULT_CONFIG, share: { ...DEFAULT_CONFIG.share } }
+  const a = applyDefaultShare(fresh, { cpu_cores: 8, ram_mb: 16384, disk_free_mb: 120000 })
+  assert.equal(a.changed, true); assert.equal(a.cfg.share_defaulted, true); assert.deepEqual([a.cfg.share.cpu_cores, a.cfg.share.ram_mb, a.cfg.share.disk_mb, a.cfg.share.max_parallel_jobs], [4, 8192, 1024, 1])
+  assert.equal(applyDefaultShare(a.cfg, { cpu_cores: 2, ram_mb: 1024, disk_free_mb: 1 }).changed, false, 'never redone')
+  const owner = applyDefaultShare({ ...fresh, share: { ...fresh.share, cpu_cores: 7 } }, { cpu_cores: 8, ram_mb: 16384, disk_free_mb: 120000 })
+  assert.equal(owner.cfg.share.cpu_cores, 7, 'a dimension the owner set stays'); assert.equal(owner.cfg.share.ram_mb, 8192)
+  const partial = applyDefaultShare(fresh, { cpu_cores: 8 })
+  assert.equal(partial.cfg.share_defaulted, false, 'an incomplete scan leaves the flag off so the next scan finishes the job'); assert.equal(partial.cfg.share.cpu_cores, 4); assert.equal(partial.cfg.share.ram_mb, null)
+  const all = applyDefaultShare({ ...fresh, share_defaulted: true }, { cpu_cores: 8, ram_mb: 16384, disk_free_mb: 120000 })
+  assert.equal(all.changed, false, 'after --cpu=0 (all of it) nothing is re-defaulted')
 })

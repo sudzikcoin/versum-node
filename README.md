@@ -174,6 +174,42 @@ the fallback design is written in [docs/gpu-native.md](docs/gpu-native.md) and n
   hub, so the site and the cabinet show it instead of "My computer". A name typed on the page wins over a
   rename made in the cabinet when both are used.
 - **Pause / Resume** — the offer stays, no new leases; running jobs finish.
+- **What you can share** (0.4.8) — besides the machine's cores, the page's "Found on this computer" block
+  sells what this computer *already runs*. Four kinds, each with its own price, its own daily $ cap, its own
+  Pause and its own timeout:
+
+  | kind | what it is | what a buyer asks for | priced |
+  |---|---|---|---|
+  | **text** | Ollama (11434), LM Studio (1234), llama.cpp / vLLM / any OpenAI-compatible server (8000 / 8080 / 5000) | a chat completion, streamed | **per 1,000 tokens** (a call is capped at 4,000) |
+  | **image** | ComfyUI (8188), A1111 (7860) | text to image: prompt, negative, width, height, steps, seed | **per image** (up to 4 a call) |
+  | **speech** | any `/asr` server (whisper-asr-webservice), any `/v1/audio/transcriptions` server (faster-whisper-server, speaches), whisper.cpp's `/inference` | an audio file in, the text plus a `.txt` and an `.srt` out | **per minute of audio**, 6 decimals |
+  | **tool** | an MCP server from your Claude Desktop / Cursor / VS Code config | one `tools/call`, tool by tool | **per call** |
+
+  The rules that hold for all four:
+  - **Nothing is shared until you tick it**, and a price is required before the tick.
+  - **The node self-tests every kind before it may be sold.** ComfyUI is asked what checkpoints it has, A1111
+    for its options, a speech server is given a quarter second of silence, an MCP server is started once and
+    asked for its tools. A kind that is found but fails is shown **greyed with the reason** ("ComfyUI has no
+    checkpoint installed — put a model in models/checkpoints and rescan") and **cannot be ticked**: the node
+    never offers what it cannot actually relay. The heartbeat carries that verdict (`ready` / `starting` /
+    `error`), the reason and the last latency, and the hub stops offering a service the moment it turns.
+  - **MCP servers are picked tool by tool.** Sharing the server starts it once so its tools can be listed —
+    that is the only time a shared server runs without a paid call. A tool that can read or change files or
+    run commands shows the red line *"this tool can read or change files on your computer"* and is
+    **unticked by default**; nothing of it is offered until you tick it by hand. An idle shared server is
+    **stopped after 10 minutes**.
+  - **The daily cap and Pause are per service.** Once today's sales of one service reach its cap the hub
+    stops offering that one; Pause stops it at once. Both leave the offer and its history in place.
+  - **Nothing of a call is written to this computer.** No prompt, no answer, no image file of ours: a PNG or
+    an `.srt` goes straight from memory to the hub, which puts it in the buyer's job outputs. The node's log
+    holds the call id and nothing else.
+  - **DATA ACCESS, said plainly on every card:** these are *your own programs*, so the buyer's prompt and
+    result pass through your machine and you could technically read them. Said once more below.
+- **Your own programs are not sandboxed, and that is the point** (0.4.8) — Ollama, ComfyUI, A1111, your
+  speech server and your MCP servers keep running exactly as they do now: as you, outside the sandbox, with
+  your files, your GPU and whatever access you already gave them. The AppContainer / sandbox-exec sandbox in
+  this node is for **buyers' scripts only** and never wraps these. That is why a filesystem MCP tool carries
+  a red line and why sharing one is a decision about trust, not a slider.
 - The runtime card (which sandbox, package and probe state), presence, earnings, the update line
   ("updating to v0.4.5 — downloading 12 of 39 MB", "updated to v0.4.5 from v0.4.4", "rolled back"),
   and the log.

@@ -189,3 +189,36 @@ not as a gate. Nobody has reported `blocked` yet (HP: no_gpu; the RTX machine st
 - Still to do on a machine, not in CI: install the current release on the RTX machine, tick the box, watch
   `preparing GPU packages, 2.8 GB …` → `ok`, read `gpu_probe` on `/nodes`, and run the words-in job "Using the GPU,
   multiply two 8192×8192 random matrices 20 times and report the time".
+
+## 6. 0.4.8 — the owner's own GPU programs are not sandboxed, and that is deliberate
+
+Everything above is about **buyers' scripts**: a stranger's Python reaching a GPU from inside an AppContainer
+(Windows) or `sandbox-exec` (macOS), and the unresolved `0xC0000142` under a restricted token. 0.4.8 adds a second,
+much simpler way to sell a GPU, and the two must not be confused.
+
+**The relay.** A shared ComfyUI, A1111, Ollama, LM Studio, vLLM, speech server or MCP server is the owner's own
+program, already installed, already configured, already using the GPU through the driver it was built against. The
+node does not wrap it, does not re-launch it and does not sandbox it: it speaks HTTP (or stdio, for MCP) to
+`127.0.0.1`, hands over the buyer's request and hands back the answer. So:
+
+- **No AppContainer question arises.** The CUDA-in-a-sandbox problem of §3 does not apply to a relayed call, because
+  nothing new is sandboxed. A machine whose `gpu_probe` says `blocked` — where buyers' GPU *scripts* are refused —
+  can still sell its ComfyUI at full GPU speed through the relay. That is the practical answer for every Windows box
+  where §3b is unresolved.
+- **The trade is trust, not isolation.** The owner's program runs as the owner, with the owner's files and whatever
+  access it already had. The buyer's prompt and result pass through it and the owner could technically read them;
+  every card, the 402 and the local page say exactly that, and `data_policy` treats a relayed call as `owner`-level
+  (public or internal, never `confidential`). An MCP tool that can touch files carries a red line on the local page
+  and is unticked by default.
+- **The sandbox line on the local page** says it in one sentence: *"These are your own programs and they keep running
+  exactly as they do now — outside the sandbox, with your files and your GPU. The AppContainer sandbox is only for
+  buyers' scripts, never for these."*
+- **What the node still owns** is the gate, not the isolation: the self-test per kind (`ready` / `starting` /
+  `error` with a reason and a latency on every heartbeat — a kind that cannot be relayed is greyed and unshareable),
+  the per-service price, the per-service daily $ cap, Pause, the per-service timeout, and the rule that no prompt,
+  answer or produced file is ever written to the node's disk.
+
+GPU facts worth keeping in mind when pricing a relayed service: `node_resources.gpu_vram_mb` is what the catalogue
+shows next to a machine, ComfyUI reports its own device in `/system_stats` (`"device": "cpu"` on a CPU-only box, and
+the proof run on this Linux server was exactly that: SD 1.5 at 512×512, 20 steps, ~2 minutes on 12 cores), and the
+per-image price is the owner's to set — the hub never derives it from the hardware.

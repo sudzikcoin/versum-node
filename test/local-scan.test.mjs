@@ -35,7 +35,7 @@ test('0.4.7: nothing is shared by default; the heartbeat list carries prices onl
 })
 test('0.4.7: the page form → config.local_shares, refusing a share without a price and unknown ids', () => {
   const services = fromOllama({ models: [{ name: 'a' }] })
-  assert.deepEqual(parseShares({ 'ollama:a': { shared: true, price_usd: '0.001', daily_cap_usd: '' } }, services), { 'ollama:a': { shared: true, price_usd: 0.001, daily_cap_usd: null } })
+  assert.deepEqual(parseShares({ 'ollama:a': { shared: true, price_usd: '0.001', daily_cap_usd: '' } }, services), { 'ollama:a': { shared: true, price_usd: 0.001, daily_cap_usd: null, paused: false, timeout_seconds: null } })
   assert.throws(() => parseShares({ 'ollama:a': { shared: true, price_usd: '' } }, services), /set a price/)
   assert.deepEqual(parseShares({ 'ollama:zzz': { shared: true, price_usd: 1 } }, services), {})
   assert.equal(taskOf('whisper-large'), 'speech-to-text'); assert.equal(taskOf('deepseek-coder'), 'code'); assert.equal(taskOf('llava'), 'vision')

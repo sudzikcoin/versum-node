@@ -52,7 +52,7 @@ for the key. Read it before you run it: [install.sh](install.sh) → [installer/
 | 0.4.3 | **self-update**: the node hears about releases on the heartbeat and swaps itself when idle | yes |
 | 0.4.4 | GPU on native Windows nodes: detection, the cu128 wheel set, the in-sandbox probe, a GPU price | yes |
 | 0.4.5 | "Name this computer" on the local page (the name reaches the hub) | yes |
-| 0.4.6 | a fresh node shares **half** the machine by default; the restricted-token sandbox for GPU jobs when the AppContainer blocks the driver (`gpu_probe: jobobject_ok`) | yes |
+| 0.4.6 | a fresh node shares **half** the machine by default; the restricted-token sandbox for GPU jobs when the AppContainer blocks the driver is built but ships OFF (`gpu_jobobject_fallback: true` opts in; see docs/gpu-native.md 3b) | yes |
 
 From 0.4.3 on, an installed Windows or macOS node updates itself: every heartbeat answer names the
 newest release and the sha256 of this platform's update bundle; the node downloads it in the background,
@@ -140,14 +140,15 @@ sandboxes do not do: [docs/native-sandbox.md](docs/native-sandbox.md). Threat mo
   start, then the torch stage (a matmul on the device) once the set is in. The verdict goes to the hub as
   `gpu_probe: appcontainer_ok | jobobject_ok | blocked | no_gpu` and to the page as "GPU in the sandbox: works |
   works in restricted-token mode | blocked".
-- **If the AppContainer blocks the driver (0.4.6).** The probe runs its sandboxed half once more through
-  `versum-sandbox.exe run --mode jobobject`: the same Job Object around a **restricted, low-integrity token**
+- **If the AppContainer blocks the driver (0.4.6, OFF by default).** With `gpu_jobobject_fallback: true` in
+  config.json the probe runs its sandboxed half once more through `versum-sandbox.exe run --mode jobobject`: the same Job Object around a **restricted, low-integrity token**
   (restricting SIDs RESTRICTED + the session's logon SID, so it sees the system directories, the Python tree, the
   package folders, its job directory and the desktop, and nothing of yours) with the interpreter blocked outbound by a firewall rule — the one step that needs
   administrator rights, once; Windows asks when the verdict first comes back `jobobject_ok`. GPU jobs then run in
-  that mode; CPU jobs stay in the AppContainer. Details and what is and is not proven: `docs/gpu-native.md` 3b.
+  that mode; CPU jobs stay in the AppContainer. It ships off because on the release runner the restricted-token
+  process dies at start (`0xC0000142`, STATUS_DLL_INIT_FAILED) — the gap and what is proven: `docs/gpu-native.md` 3b.
   The hub leases GPU pieces to a native node only with `gpu_packages = ok` **and** `gpu_probe =
-  appcontainer_ok`. `versum-node gpu-check` runs it by hand (exit 0 works, 1 blocked, 2 no GPU).
+  appcontainer_ok` or `jobobject_ok`. `versum-node gpu-check` runs it by hand (exit 0 works, 1 blocked, 2 no GPU).
 - **A separate price.** The page takes a price per GPU minute; the default suggestion and the hub's
   fallback when none is set is 5 × the CPU price. The rate is snapshotted at lease.
 

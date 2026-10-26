@@ -145,6 +145,17 @@ written its result. NOT proven: that the NVIDIA driver admits the restricted tok
 that is exactly what the probe decides on the first machine with an NVIDIA GPU that reports `blocked`; no node has
 reported `blocked` yet (HP: `no_gpu`; the RTX 5070 Ti machine still runs 0.4.0 and has to be reinstalled once).
 
+**Status on 2026-10-26 (0.4.6):** the mode is BUILT (`versum-sandbox.exe run --mode jobobject`, restricting SID
+RESTRICTED + the session's logon SID, low integrity, `firewall-block` / `firewall-status` for the interpreter rule) and
+SHIPS OFF. On the GitHub Windows runner the restricted-token process dies at start with exit `0xC0000142`
+(STATUS_DLL_INIT_FAILED) before Python runs — the token cannot initialise against the runner's window station /
+desktop and DLL search path; two SID variants were tried in CI. So the node builds the fallback executor only when
+the owner sets `gpu_jobobject_fallback: true` in config.json; without it the verdict stays `blocked` where the
+AppContainer blocks CUDA, the local page says "GPU in the sandbox: blocked", and no GPU job is taken. The hub already
+accepts the `jobobject_ok` verdict (migration 20261205001800), so when the start-up failure is understood on a real
+machine the switch is one config line, no hub change. `sandbox-check --mode=jobobject` runs in CI as information,
+not as a gate. Nobody has reported `blocked` yet (HP: no_gpu; the RTX machine still runs 0.4.0).
+
 ## 4. Hub (shipped: migration `20261205001600_v1_gpu_native`)
 
 1. **Resources**: `node_resources` gained `gpu_cuda`, `gpu_packages` (`ok | pending | failed`) and `gpu_probe`

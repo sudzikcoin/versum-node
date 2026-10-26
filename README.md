@@ -1,55 +1,73 @@
 # versum-node
 
-Share your computer's spare compute with the Versum network and get paid per minute.
+Share your computer's spare compute with the Versum network and get paid per minute, in USDC on Base.
 
 You install one program. It looks at what the machine has (CPU cores, RAM, GPU, disk, type of
-connection), you choose how much of it to share, when, and at what price per minute. Jobs from
-buyers run inside a throw-away container that is wiped when the job ends. The node never
-advertises "skills": it offers resources and time, nothing else.
+connection), you choose how much of it to share, when, and at what price per minute. Buyers' scripts
+run inside a sandbox that is wiped when the job ends. The node never advertises "skills": it offers
+resources and time, nothing else.
 
-**Status: alpha.** The node leases jobs from the hub, runs them in a wiped container and reports
-them; the first live job went end to end on 2026-10-25. Linux x86_64 / aarch64 (rootless Podman or
-Docker). **Windows 10/11 and macOS 12+ (v0.4.0): one click, nothing else** — the installer from the site is a single
-binary with an embedded Python; script jobs run inside the operating system's own sandbox (Windows AppContainer,
-macOS sandbox-exec), no Docker, no WSL, no administrator, see [docs/native-sandbox.md](docs/native-sandbox.md).
-On Linux, Node.js ≥ 20 is
-downloaded if the machine has none. No dependencies: `lib/` is the whole program, read it.
+**Current release: v0.4.5** (2026-10-26). Windows 10/11 and macOS 12+ get a one-click installer; Linux
+gets a one-line installer. Alpha: the first live job went end to end on 2026-10-25, and every release
+is proven on clean GitHub runners (install, pair, run a job inside the sandbox, update itself, uninstall)
+before it is published.
 
-## Install (one line, then no terminal)
+## Install
 
-On the site, **Connect a computer → Get a key**. The page shows the line for your OS with the key
-already inside it; it is one of these:
+### Windows and macOS: one download, one double-click
+
+On the site, **Connect a computer** (`https://launchloop.suverse.io/connect`) → **Download for Windows**
+or **Download for macOS**. The pairing key is inside the file name
+(`versum-node-setup-llk_….exe`, `Versum-Node-arm64-llk_….dmg`), so nothing has to be typed.
+Double-click it. The node installs under your own account, starts, pairs, and opens its local page.
+
+- No administrator prompt, no WSL, no Docker, no Node.js, no reboot. The installer is under 100 MB;
+  the node takes about 250 MB on disk (one binary, an embedded Python 3.12, the sandbox helper).
+- The installers are not code-signed: Windows SmartScreen says "Windows protected your PC" → *More
+  info* → *Run anyway*; macOS Gatekeeper wants a right-click → *Open* (Sequoia: System Settings →
+  Privacy & Security → *Open Anyway*). The site shows these two clicks.
+- Apple silicon and Intel Macs get different images; `/connect` picks the right one.
+
+Details, logs and uninstall: [docs/installers.md](docs/installers.md).
+
+### Linux: one line
 
 ```bash
-# Linux and macOS (run as root on a Linux server: a dedicated user and a system service are created)
+# as root on a server: a dedicated user `versum` and a system service are created; as a user: a user unit with linger
 curl -fsSL https://raw.githubusercontent.com/sudzikcoin/versum-node/main/install.sh | VERSUM_HUB='https://launchloop.suverse.io' VERSUM_NODE_KEY='llk_…' sh
 ```
 
-```powershell
-# Windows (PowerShell, not as administrator)
-# Windows / macOS: download the installer from https://versum.suverse.io/connect (the key is in the file name) and double-click it.
-# Advanced Windows (WSL2 + Docker Desktop, for GPU work later):
-$env:VERSUM_NODE_KEY='llk_…'; $env:VERSUM_HUB='https://launchloop.suverse.io'; irm https://raw.githubusercontent.com/sudzikcoin/versum-node/main/installer/install-wsl.ps1 | iex
-```
+The line checks the OS, finds or downloads Node.js ≥ 20 (checksum verified), finds rootless Podman or
+Docker, downloads this repository, installs a systemd unit that starts at boot, starts the node and
+prints the local page's address. Without the two variables it installs an unpaired node whose page asks
+for the key. Read it before you run it: [install.sh](install.sh) → [installer/install.sh](installer/install.sh).
 
-Without the two variables the same line installs an unpaired node and its page asks for the key.
+### Versions and updates
 
-What the line does, in order, and it says so as it goes: checks the OS, finds or downloads Node.js
-(checksum verified), finds a container runtime (and on macOS/Windows waits for Docker Desktop or
-OrbStack if you still have to install it), downloads this repository, installs a service that starts
-at boot (systemd system or user unit with linger on Linux, a launchd agent on macOS, a scheduled task
-on Windows that runs the node inside WSL), **starts it and opens the node's local page**:
+| Version | What it brought | Updates itself? |
+|---|---|---|
+| 0.4.0 | Windows/macOS without Docker: single binary, embedded Python, OS sandbox | no |
+| 0.4.1 | one script contract on every runtime (`VERSUM_JOB_IN` / `VERSUM_JOB_OUT`) | no |
+| 0.4.2 | the standard Python packages downloaded and verified on first start | no |
+| 0.4.3 | **self-update**: the node hears about releases on the heartbeat and swaps itself when idle | yes |
+| 0.4.4 | GPU on native Windows nodes: detection, the cu128 wheel set, the in-sandbox probe, a GPU price | yes |
+| 0.4.5 | "Name this computer" on the local page (the name reaches the hub) | yes |
 
-**`http://127.0.0.1:3311/`** — reachable from that machine only. Everything an owner does happens
-there: pair with the key, move the sliders for CPU, RAM and disk, switch the GPU, set the price per
-minute next to the market hint, choose hours, pause and resume, see earnings, reputation and the log.
-A root-owned Docker daemon is not used until you allow it once on that page (a container escape
-there would be root on the machine); rootless Podman needs no consent.
+From 0.4.3 on, an installed Windows or macOS node updates itself: every heartbeat answer names the
+newest release and the sha256 of this platform's update bundle; the node downloads it in the background,
+checks the hash, starts the new binary once to hear its version, stops taking new jobs, swaps the program
+when nothing runs, and rolls back if the new program does not come up. **The key, the settings, the name,
+the price and the downloaded Python packages stay.** How it works: [docs/self-update.md](docs/self-update.md).
 
-Read the installers before you run them: [install.sh](install.sh) →
-[installer/install.sh](installer/install.sh) (Linux), [installer/install-macos.sh](installer/install-macos.sh),
-[installer/install-wsl.ps1](installer/install-wsl.ps1) (Windows, advanced); the one-click installers are built by
-[.github/workflows/release.yml](.github/workflows/release.yml) from [packaging/](packaging/).
+**Nodes on 0.4.0, 0.4.1 or 0.4.2 cannot update themselves.** Those versions ignore the heartbeat answer
+and have no update code; nothing the hub sends can change the program on disk. Each of them needs **one
+manual reinstall** with the current installer from `/connect`. That reinstall is the last one done by
+hand. A Linux node installed from this repository runs from source and does not swap itself either:
+`git pull` (or run the install line again) updates it.
+
+**`http://127.0.0.1:3311/`** is the node's local page, reachable from that machine only. Everything an
+owner does happens there: pair with the key, name the computer, choose what to share, set the price per
+minute next to the market hint, choose hours, pause and resume, see the runtime, earnings and the log.
 
 ### The command line, if you prefer it
 
@@ -59,125 +77,180 @@ versum-node pair llk_… --hub=https://launchloop.suverse.io
 versum-node offer --cpu=4 --ram-gb=8 --price=0.02  # what you share, and your price per minute
 versum-node offer --windows="Mon-Fri 22:00-07:00, Sat-Sun 00:00-24:00"   # when (default: always)
 versum-node start                                  # the service runs this; `versum-node open` shows the page
-versum-node status · on · off · doctor · prune
+versum-node status · on · off · doctor · gpu-check · prune
 ```
 
-## What the node shares
+## How jobs run
 
-Only what you turn on, within the limits you set:
+A job is a buyer's Python script (composed on the hub from the buyer's words, or written by the buyer)
+with its input files. Where it runs depends on the OS:
 
-| Resource | Flag | What you set |
-|---|---|---|
-| CPU | `--cpu=4` | number of cores, out of what the scanner found (0 = all) |
-| RAM | `--ram-gb=8` | gigabytes (0 = all) |
-| GPU | `--gpu=true` | on/off (NVIDIA first; needs nvidia-container-toolkit) |
-| Disk | `--disk-gb=20` | a scratch quota, used only while a job runs |
-| Network | `--network=true` | whether jobs may reach the internet at all; **off by default**, most jobs need none |
-| Parallel | `--parallel=2` | how many jobs run at once |
-| Time | `--max-job-minutes=240`, `--windows=…` | the longest job you accept; a schedule |
-| Price | `--price=0.02` | USD per minute for the bundle above |
-| Mobility | `--mobility=mobile` | a laptop that may vanish mid-job is scheduled accordingly |
+| | Linux | Windows | macOS |
+|---|---|---|---|
+| Isolation | a fresh rootless Podman/Docker container: user namespace, read-only root, all capabilities dropped, `no-new-privileges`, cpu/memory/pids limits | **AppContainer** with zero capabilities + a **Job Object** (memory cap, hard CPU rate cap, 64 processes, kill on close) | **Seatbelt** (`sandbox-exec`, deny by default) + `ulimit -t` / `ulimit -f` + `nice` |
+| Python | the hub's pinned image `ghcr.io/sudzikcoin/versum-python@sha256:…` | embedded Python 3.12 (python-build-standalone, sha256-pinned) | the same |
+| Job kinds | `python`, `container`; GPU and network when shared | `python` (`executor_kind: script_native`); GPU after "share the GPU" | `python` only |
+| Network inside the job | none, unless the buyer asks **and** you allow it (then a logged proxy, 443/80, LAN denied) | **none, ever** — not even loopback | **none, ever** |
 
-The scanner reads hardware facts (`/proc`, `nvidia-smi`, the free space of its own directory). It
-never walks your files. The exact list: [docs/what-the-node-touches.md](docs/what-the-node-touches.md).
+**Python packages on a native node (0.4.2).** The embedded Python ships nothing. On the first start after
+an install the node downloads the standard image's package set as 18 wheels from PyPI (numpy, pandas,
+pillow, requests, pypdf, openpyxl, python-docx and their dependencies, the same pinned versions the Linux
+image has), checks every file's sha256 against `pylib-lock.json` shipped with the release, unpacks them
+with its own interpreter and puts the folder on `PYTHONPATH` for jobs. The page says "preparing Python
+packages, 60 MB (n of 18)"; the heartbeat reports `python_packages: ok | pending | failed`, and the hub
+offers python jobs to a native node only once it says `ok`.
 
-## What the node never touches
+**The script contract, every runtime (0.4.1).** A job reads its inputs from the directory named by
+`VERSUM_JOB_IN` and writes its results into `VERSUM_JOB_OUT`. In a Linux container those are `/job/in`
+and `/job/out`; on a Windows or macOS node they are the `in/` and `out/` folders of the attempt's own
+directory, which is also the working directory. A script written as
+`os.environ.get('VERSUM_JOB_OUT', '/job/out')` runs everywhere; one that hard-codes `/job/out` dies on a
+native node. The hub's composer writes scripts this way.
 
-- **Your files.** A job sees one empty working directory the node creates for it and deletes
-  afterwards. No home directory, no other mounts, no host paths.
-- **Your network.** By default a job has no network interface at all. If you allow internet, the
-  job goes through the node's own proxy (443/80, LAN addresses denied, every host logged) and never
-  sees your LAN directly.
-- **Your other programs.** The job runs as an unprivileged user in a user namespace, read-only root
-  filesystem, all Linux capabilities dropped, `no-new-privileges`, with CPU, memory, process and
-  tmpfs limits enforced by the container runtime. The node refuses a rootful runtime unless you
-  explicitly accept the risk (`VERSUM_NODE_ALLOW_ROOTFUL=1`).
-- **Your keys.** The node keeps one config file (mode 0600) with its own node key. No job can read
-  the node's config or environment; the container gets exactly the buyer's variables plus three
-  `VERSUM_*` ids.
+**What a job never gets, on any OS:** your files (only its own attempt directory, deleted afterwards),
+your network (see the table), your other programs, the node's key or environment (the job's environment
+is built from scratch: the buyer's variables plus the `VERSUM_*` ids and paths). The manifest the hub
+sends has no field for mounts, devices, capabilities or runtime flags; the node builds the command itself
+([lib/manifest.mjs](lib/manifest.mjs), [lib/native.mjs](lib/native.mjs)). The time limit kills, a stall
+(no output and no CPU movement for 15 minutes) kills, and the attempt's directory is deleted always,
+even on failure.
 
-A job is a buyer's Python script run in Versum's standard image, or the buyer's own container
-image plus a command. Images are always pinned by digest. The manifest the hub sends has no field
-for mounts, devices, capabilities or runtime flags: the node builds the argv itself
-([lib/manifest.mjs](lib/manifest.mjs)). The node pulls the image, runs it with the limits above,
-uploads `/job/out`, reports, removes the container and the working directory. Always, even on
+**Container-image jobs, GPU-through-a-container jobs and jobs that need the network are Linux-only.**
+Docker Desktop on Windows/macOS is still an advanced path (`runtime: docker` in the config) and is not
+what the one-click installer sets up.
 
-**The script contract, every runtime.** A job reads its inputs from `VERSUM_JOB_IN` and writes its results into
-`VERSUM_JOB_OUT` — on a Linux container those are `/job/in` and `/job/out`, on a Windows (AppContainer) or
-macOS (sandbox-exec) node they are the `in/` and `out/` folders of the attempt, and the working directory is
-the attempt's folder. A script written as `os.environ.get('VERSUM_JOB_OUT', '/job/out')` runs everywhere;
-one that hard-codes `/job/out` dies on a native node (0.4.1).
+The per-OS isolation tables, what the CI probe verifies on every release and the honest list of what the
+sandboxes do not do: [docs/native-sandbox.md](docs/native-sandbox.md). Threat model:
+[docs/threat-model.md](docs/threat-model.md). The exact list of what the node reads, writes and sends:
+[docs/what-the-node-touches.md](docs/what-the-node-touches.md).
 
-**Python packages on a native node (0.4.2).** The embedded Python ships nothing; on the first start after an
-install the node downloads the standard image's package set (numpy, pandas, pillow, requests, pypdf, openpyxl,
-python-docx — the same pinned versions) as wheels from PyPI into `<state>/pylib`, checks every file's sha256
-against `pylib-lock.json` shipped with the release, unpacks them with its own interpreter and puts the folder on
-PYTHONPATH for jobs (the sandbox reads it like the Python tree; it still has no network). The local page shows
-"preparing Python packages, 60 MB (n of 18)"; the heartbeat reports `python_packages: ok | pending | failed`
-and the hub offers python jobs to a native node only once it says ok.
-failure. Full threat model: [docs/threat-model.md](docs/threat-model.md).
+## GPU on a native Windows node (0.4.4)
 
-**Updates itself (0.4.3).** Every heartbeat answer from the hub names the newest release and the sha256 of the update
-bundle for this computer's platform. When it is newer, the node downloads the bundle in the background, checks the hash,
-unpacks it, starts the new binary once to hear it say its version, stops taking new jobs, and — once nothing runs — swaps
-the program and restarts itself (Windows: through the Startup entry's own `launch.vbs`; macOS: launchd brings it back).
-The key, the settings, the name, the price and the Python packages stay where they are; `pylib-lock.json` changed →
-the packages are refreshed and `python_packages` reports `ok` again. The local page says "updating to v…" and then the
-version it runs. A download, hash or start failure changes nothing; a swap that does not come up three times rolls
-back to the previous program. Details in `docs/self-update.md`.
+- **Detection.** The scan asks `nvidia-smi` (shipped inside the NVIDIA driver) for the GPU's name, VRAM,
+  driver and the driver's CUDA version, and reports a `gpu` block on every heartbeat. A machine without a
+  GPU, an AMD GPU, or an NVIDIA GPU without a CUDA driver hides the GPU box on the local page and says why.
+  macOS has no NVIDIA driver; nothing runs there.
+- **"share the GPU".** Ticking the box on an NVIDIA machine with driver CUDA ≥ 12.8 downloads the GPU
+  wheel set beside the standard packages: `cu128`, 14 wheels, **2.8 GB** (torch 2.9.1+cu128 with the CUDA
+  runtime it bundles, cupy, numba and their dependencies), pinned in `pylib-gpu-lock.json`, sha256-checked,
+  resumable. `gpu_packages: pending | ok | failed` on the heartbeat and on the page.
+- **The probe.** The node runs `probe/gpu_probe.py` on itself: once with the owner's token and once
+  **inside the real AppContainer**, first the driver stage (`nvcuda.dll`, `cuInit`, a context) on first
+  start, then the torch stage (a matmul on the device) once the set is in. The verdict goes to the hub as
+  `gpu_probe: appcontainer_ok | blocked | no_gpu` and to the page as "GPU in the sandbox: works | blocked".
+  The hub leases GPU pieces to a native node only with `gpu_packages = ok` **and** `gpu_probe =
+  appcontainer_ok`. `versum-node gpu-check` runs it by hand (exit 0 works, 1 blocked, 2 no GPU).
+- **A separate price.** The page takes a price per GPU minute; the default suggestion and the hub's
+  fallback when none is set is 5 × the CPU price. The rate is snapshotted at lease.
+
+**Open question: does the Windows AppContainer admit CUDA?** Nothing public says whether the driver's
+kernel-mode door accepts a low-box token, GitHub has no GPU runners for a user account, and no machine
+with an NVIDIA GPU has run 0.4.4 yet (the one RTX machine on the network runs 0.4.0 and needs the manual
+reinstall above). CI proves the no-GPU side only: the probe runs inside the AppContainer on the runner
+and reports `no_gpu`. The answer arrives on the first real NVIDIA machine's heartbeat; if it is `blocked`,
+the fallback design is written in [docs/gpu-native.md](docs/gpu-native.md) and not built.
+
+## The local page
+
+- **What you share** — CPU cores, RAM and disk sliders (default: everything the scan found), the GPU box
+  (shown only on an NVIDIA machine with a CUDA driver, or on a Linux container node), "jobs may use the
+  internet" (Linux only; off by default), parallel jobs (default 1), the longest job you accept (default
+  240 minutes), hours (default: always), a laptop that may vanish mid-job (`mobility`).
+- **Price** per minute, next to the **market hint** read from the hub's public capacity board: "market
+  now: 3 nodes online, from $0.0100/min, typical $0.0200/min — a reference, not a rate". A GPU price
+  field on an NVIDIA machine.
+- **Name this computer** (0.4.5) — prefilled from a chosen hostname ("HP-Laptop" → "HP Laptop") or, for a
+  factory hostname, the CPU family ("Ryzen 7 PC", "Apple M2 Pro Mac"); saved with the offer and sent to the
+  hub, so the site and the cabinet show it instead of "My computer". A name typed on the page wins over a
+  rename made in the cabinet when both are used.
+- **Pause / Resume** — the offer stays, no new leases; running jobs finish.
+- The runtime card (which sandbox, package and probe state), presence, earnings, the update line
+  ("updating to v0.4.5 — downloading 12 of 39 MB", "updated to v0.4.5 from v0.4.4", "rolled back"),
+  and the log.
+
+Writes to the page need a header only the page itself sends, and the page never returns CORS headers:
+a web page in your browser cannot drive it.
 
 ## How money works
 
-1. A buyer submits a job with resource requirements and a time limit, and pays an estimate into
-   escrow (USDC on Base) up front.
-2. The hub leases the job, or a piece of it, to a node whose shared resources, window and price fit.
-3. The node runs it and reports the minutes the container actually ran. The hub bills
-   **actual minutes × your price per minute** on its own clock, never more than the buyer's limit.
-   Your price is snapshotted at lease: repricing never changes a running job.
-4. The buyer has a window to rate the result. After the window the node's share is paid out to the
-   wallet you set in your cabinet. Versum keeps a commission from the buyer's side.
-5. Your reputation is your ratings plus your completion rate. Nodes that drop or time out jobs get
-   fewer leases.
-
-Payouts are in USDC on Base. You need a wallet address; you do not need to hold any crypto to start.
+1. A buyer funds a cap into escrow (USDC on Base) or pays through x402 before the job is created.
+2. The hub leases the job, or a piece of it, to the **cheapest** node whose kind, shared resources, open
+   window, packages and price fit.
+3. The node runs it and reports. The hub bills **actual minutes × your price per minute** on its own
+   clock, to six decimals, never more than the cap. Your price is snapshotted at lease: repricing never
+   changes a running job.
+4. The buyer accepts or rejects the result within a rating window (silence after the window = accepted).
+   On accept, **80 %** of the billed amount is written to your ledger at once; Versum keeps 20 %. A rejected
+   piece is not billed and the money returns to the buyer.
+5. Payouts go to the wallet you set in the cabinet on the site once your balance reaches **$1**. You need a
+   wallet address; you do not need to hold any crypto to start.
+6. Your reputation is your ratings plus your completion rate. Nodes that drop or time out jobs get fewer
+   leases.
 
 ## What is in this repository
 
 ```
-bin/versum-node.mjs   the CLI: scan · doctor · pair · offer · on/off · status · start · once · run-local · prune
-lib/scan.mjs          cores, RAM, GPU (nvidia-smi / rocm-smi), disk, connection type — pure parsers, tested on fixtures
+bin/versum-node.mjs   the CLI: scan · doctor · pair · offer · on/off · status · start · once · run-local · gpu-check · prune
+lib/scan.mjs          cores, RAM, GPU, disk, connection type — pure parsers, tested on fixtures; the node's version
+lib/gpu-detect.mjs    nvidia-smi / Win32_VideoController → the gpu block (0.4.4)
 lib/runtime.mjs       finds the executor: the built-in sandbox on Windows/macOS, Podman or Docker (rootless) on Linux
 lib/native.mjs        the native sandbox: AppContainer (Windows, via packaging/windows/sandbox) / Seatbelt (macOS)
 lib/container.mjs     the container executor (pull by digest, containerArgs posture, per-job proxy, cgroup cpu)
 lib/manifest.mjs      validates the hub's manifest and builds the container argv (the whole security posture, in one file)
-lib/runner.mjs        one attempt: inputs → pull by digest → run → meter → upload /job/out → report → wipe
+lib/runner.mjs        one attempt: inputs → run → meter → upload outputs → report → wipe
+lib/pylib.mjs         the 18 standard wheels: download, sha256 against pylib-lock.json, unpack, import check (0.4.2)
+lib/pylib-gpu.mjs     the cu128 GPU wheel set, resumable (0.4.4)
+lib/gpu-probe.mjs     runs probe/gpu_probe.py bare and inside the sandbox; the gpu_probe verdict (0.4.4)
+lib/update.mjs        self-update: decide, download, verify, smoke, swap when idle, roll back (0.4.3)
 lib/metering.mjs      cpu seconds from the container's cgroup, as evidence beside the hub's clock
-lib/egress.mjs        the per-job proxy, only when the job asks AND you allow network
+lib/egress.mjs        the per-job proxy, only when the job asks AND you allow network (Linux)
 lib/hub.mjs           the outbound client (the only network the node itself uses)
 lib/node.mjs          the loop: heartbeat → lease when free and inside a window → run → report
-lib/health.mjs        http://127.0.0.1:3311/
+lib/local-ui.mjs      http://127.0.0.1:3311/ — the page, the market hint, the name suggestion (0.4.5)
 lib/config.mjs        ~/.versum-node/config.json (0600), --windows parsing
-egress/               the proxy image: tinyproxy + the LAN deny list
-installer/            install.sh and the user systemd unit
+probe/                sandbox_probe.py (what the CI job proves), gpu_probe.py / gpu_probe.ps1
+packaging/            Inno Setup script + launch.vbs + the C# sandbox helper (Windows); the installer app (macOS); pinned Python
+installer/            install.sh (Linux), install-macos.sh, install-wsl.ps1 (advanced), systemd units
+scripts/              build-sea.mjs (the single binary), pylib-gpu-lock.mjs (regenerates the GPU lock)
+pylib-lock.json       the 18 wheels per platform with sha256; pylib-gpu-lock.json the GPU set
 protocol/README.md    every call between node and hub, and the manifest contract
-docs/                 threat model; what the node reads, writes, sends — and never does
-test/                 node --test: manifest posture, parsers, windows, pulse, config permissions
+docs/                 installers, native sandbox, GPU, self-update, threat model, what the node touches
+test/                 node --test test/*.test.mjs; test/e2e/ = what release.yml runs on the real installers
 ```
 
-Everything that touches money, scheduling across nodes and the buyer side lives on the hub and is
-not in this repository.
+Everything that touches money, scheduling across nodes and the buyer side lives on the hub and is not in
+this repository. Releases are built by [.github/workflows/release.yml](.github/workflows/release.yml) on
+every `v*` tag: build, install the real `.exe` and `.dmg` on `windows-latest` and `macos-latest`, pair
+with a dev hub, run a job inside the sandbox, update the installed node to a candidate built in the same
+run, uninstall, and only then publish the assets.
+
+## Honest gaps
+
+- **Unsigned installers.** SmartScreen and Gatekeeper warn once. Code signing is a certificate purchase,
+  not code.
+- **Intel Macs** are verified only under Rosetta on Apple-silicon runners: the x64 binary loads and runs,
+  the Seatbelt probe has not run on an Intel kernel. The sandbox code is the same as arm64's.
+- **Windows on ARM** is untested; the installer is x64 only.
+- **No resource pooling.** RAM and disk are never combined across machines: a job that needs 32 GB needs
+  one node with 32 GB. CPU and GPU parallelism exists only through pieces: a job split into pieces runs
+  them on several nodes at once, each piece within one node.
+- **macOS memory and disk limits are polls**, not kernel caps; a job can overshoot briefly before it is
+  killed. Windows has kernel caps. Details in [docs/native-sandbox.md](docs/native-sandbox.md).
+- **AppContainer + CUDA is unproven** (see above).
+- **A buyer's inputs are readable by the node owner.** Do not send secrets or data you cannot afford to
+  leak; encrypted or attested execution is not in v1.
 
 ## Try it without the hub
 
 ```bash
 git clone https://github.com/sudzikcoin/versum-node && cd versum-node
-npm test
+node --test test/*.test.mjs
 node bin/versum-node.mjs scan
 node bin/versum-node.mjs run-local test/fixtures/manifest.local.json   # runs a tiny Python job in a container
 ```
 
-`run-local` takes a manifest whose inputs carry a local `path`, runs it with the exact posture a hub
-job gets, and leaves the outputs in `~/.versum-node/jobs/<attempt>/out` for you to inspect.
+`run-local` takes a manifest whose inputs carry a local `path`, runs it with the exact posture a hub job
+gets, and leaves the outputs in `~/.versum-node/jobs/<attempt>/out` for you to inspect.
 
 ## Why open source
 

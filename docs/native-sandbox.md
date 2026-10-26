@@ -1,4 +1,8 @@
-# The native sandbox — script jobs on Windows and macOS without Docker (v0.4.0)
+# The native sandbox — script jobs on Windows and macOS without Docker
+
+Shipped in v0.4.0; this page describes v0.4.5. Changes since 0.4.0: the standard Python packages arrive on first
+start (0.4.2), the `VERSUM_JOB_IN` / `VERSUM_JOB_OUT` contract (0.4.1), GPU jobs on NVIDIA Windows machines after
+"share the GPU" (0.4.4, [gpu-native.md](gpu-native.md)).
 
 **What the owner does:** downloads one file from the site, double-clicks it, the node page opens. No WSL, no
 Docker Desktop, no reboot, no terminal, no administrator prompt. The installer is under 100 MB and the node
@@ -14,12 +18,19 @@ takes about 250 MB on disk (a single Node.js binary, an embedded Python 3.12, th
 | Autostart | systemd unit (system or user) | Startup-folder shortcut → `wscript.exe launch.vbs` (hidden) | launchd agent `io.suverse.versum-node` |
 | Python for script jobs | the hub's pinned image `ghcr.io/sudzikcoin/versum-python@sha256:…` inside a container | `python\python.exe` from python-build-standalone 3.12 (`packaging/versions.json`, sha256 pinned) | `python/bin/python3`, same source |
 | Isolation | fresh rootless Podman/Docker container, `containerArgs()` posture | **AppContainer** + Job Object (`versum-sandbox.exe`) | **Seatbelt** (`/usr/bin/sandbox-exec`) + ulimit + nice |
-| Job kinds | `python`, `container`; GPU and network when shared | `python` only (`executor_kind: script_native`) | `python` only |
+| Job kinds | `python`, `container`; GPU and network when shared | `python` (`executor_kind: script_native`); GPU pieces once `gpu_packages = ok` and `gpu_probe = appcontainer_ok` | `python` only |
 | Uninstall | remove the unit and the directory | Settings → Apps → Versum node | `~/.versum-node/app/uninstall.sh` |
 
 The hub stores `executor_kind` per node (`node_resources.executor_kind`, reported in every scan) and
-`pieces_for_node()` offers a `script_native` node only `python` pieces without GPU and without network.
+`pieces_for_node()` offers a `script_native` node only `python` pieces without network, and only once the node
+reports `python_packages = ok`; a GPU piece additionally needs `gpu_packages = ok` and `gpu_probe = appcontainer_ok`.
 The node refuses anything else anyway (`fitsNative`), releasing the piece with `reason_code: capacity`.
+
+**Paths and packages inside the job.** The script runs from `<attempt>/in/` with the working directory set to the
+attempt's directory; `VERSUM_JOB_IN` and `VERSUM_JOB_OUT` name the `in/` and `out/` folders (there is no `/job`).
+`PYTHONPATH` points at `<state>/pylib`, the 18 standard wheels the node downloaded and verified against
+`pylib-lock.json` on first start (the sandbox reads that folder like the Python tree). A GPU job also gets
+`<state>/pylib-gpu` on `PYTHONPATH` and torch's bundled CUDA runtime on `PATH` / `CUDA_PATH`.
 
 Container-image jobs stay Linux-only. Docker Desktop (Windows: through WSL2) remains an *advanced* path
 (`runtime: docker` in the config, or `VERSUM_NODE_RUNTIME=docker`) for GPU work later; `installer/install-wsl.ps1`
@@ -99,8 +110,10 @@ refused; 127.0.0.1:3311 (the node's own page!) → refused; `os.listdir("C:\\Use
   Job Object holds every descendant.
 - **Disk is a soft limit** on both (no quota without administrator rights): measured every 5 s, killed when
   over, outputs over the cap not uploaded. A job can write faster than that for five seconds.
-- **No GPU, no network, no container images** on native nodes — by design in v0.4.0; those jobs go to
-  Linux nodes. The WSL2 + Docker Desktop path (`installer/install-wsl.ps1`) is kept for GPU work later.
+- **No network, no container images** on native nodes — by design; those jobs go to Linux nodes. **GPU**: only
+  on Windows with an NVIDIA GPU, and only if the probe shows that CUDA is reachable from inside the AppContainer —
+  which no real machine has confirmed yet ([gpu-native.md](gpu-native.md)). macOS native nodes take no GPU jobs.
+- **No resource pooling.** RAM and disk are one machine's; CPU/GPU parallelism exists only through pieces.
 - **The Seatbelt profile language is undocumented by Apple** (`sandbox-exec` is marked deprecated but ships
   in every macOS through 15 and is what Chrome, Safari helpers and `xcodebuild` use). Each release's CI run on
   `macos-latest` is the regression test; a future macOS could change a path the profile allows (e.g. where the

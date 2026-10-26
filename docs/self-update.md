@@ -1,6 +1,8 @@
-# Self-update (0.4.3)
+# Self-update (since 0.4.3)
 
-Nobody reinstalls a node by hand. From 0.4.3 on, an installed Windows or macOS node updates itself.
+Nobody reinstalls a node by hand. From 0.4.3 on, an installed Windows or macOS node updates itself; 0.4.4 and 0.4.5
+reached every 0.4.3+ node this way. A Linux node installed from this repository runs from source and does not swap
+itself (the page says so when a release is out; `git pull` or the install line updates it).
 
 ## How the node hears about a release
 
@@ -62,5 +64,7 @@ runners passed this.
 ## Nodes older than 0.4.3
 
 0.4.0–0.4.2 ignore the heartbeat answer and read nothing else from the hub that could carry code; their jobs run inside
-the sandbox, which cannot write to the install directory. They cannot be updated from the hub — the next install is the
-last one done by hand.
+the sandbox, which cannot write to the install directory. They cannot be updated from the hub: each such machine needs
+**one manual reinstall** with the current installer from `/connect` (the key stays in the file name, the config on disk
+is kept), and that install is the last one done by hand. The cabinet on the site shows the version each computer runs
+and that a newer release is out.

@@ -24,6 +24,12 @@ with zero capabilities (no network including loopback, no user files, no other p
 `ulimit -f` and `nice`. Residuals: macOS memory and disk are polled limits, not kernel caps; a `setsid()` job on
 macOS outlives the kill but stays sandboxed and budgeted; the installers are not code-signed.
 
+Code the node downloads after install (0.4.2+): the Python wheels come from PyPI (and the PyTorch index for the GPU
+set) and are accepted only when their sha256 matches the lock file shipped inside the release; the update bundle
+(0.4.3+) is accepted only when its sha256 matches the digest GitHub attached to the release asset and its URL is
+our release page. A hub cannot push code to a node: the heartbeat answer carries a version and a hash, never a
+program, and the node trusts no URL without a hash.
+
 ## The buyer, against a malicious node
 
 | Threat | Control in v1 | Residual |

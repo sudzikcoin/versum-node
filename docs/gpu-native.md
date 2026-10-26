@@ -1,31 +1,34 @@
-# GPU on native Windows nodes (0.4.4) — what is built, what is proven, what is still a plan
+# GPU on native Windows nodes (0.4.4) — what is built, what is proven, what is still open
 
-Status on 2026-10-26: **wired into 0.4.4** (`lib/node.mjs`, `lib/local-ui.mjs`, `lib/native.mjs`, `lib/scan.mjs`, `bin/versum-node.mjs`,
-`release.yml`), the hub side is in (migration `20261205001600_v1_gpu_native`, scheduler + mirrors, composer, GPU price,
-cabinet). The sections below are the design as built; the file/line wiring notes are kept as the map of where it lives.
+Status on 2026-10-26: shipped in **v0.4.4** (node) and hub migration `20261205001600_v1_gpu_native` (scheduler,
+mirrors, composer, GPU price, cabinet). Every part below is wired and released; the one thing nobody has seen yet is a
+real NVIDIA machine's verdict.
 
-| Piece | File | State |
+| Piece | Where | State |
 |---|---|---|
-| Detection (item 1) | `lib/gpu-detect.mjs` (+ `lib/scan.mjs` carries the `gpu` block) | wired: `resources.gpu` on every heartbeat, the page's boxes from `gpuPageLines` |
-| GPU wheel set (item 2) | `pylib-gpu-lock.json` + `scripts/pylib-gpu-lock.mjs` + `lib/pylib-gpu.mjs` | wired: ticking "share the GPU" fetches the set after the base set, `gpu_packages` on the heartbeat |
-| Sandbox probe (item 3) | `lib/gpu-probe.mjs` + `probe/gpu_probe.py` (+ `probe/gpu_probe.ps1` by hand, `versum-node gpu-check`) | wired: **the node runs the probe on itself** — driver stage on first start (`nvcuda` inside the AppContainer), torch stage once the set is in; `gpu_probe: appcontainer_ok \| blocked \| no_gpu` on the heartbeat; GPU jobs only after the torch stage passes |
-| Hub (item 4) | `/opt/launchloop` migration 001600, `lib/nodes/resources.ts`, `lib/compute/{limits,jobs}.ts`, `lib/site/compose.ts`, `NodesLive.tsx` | in: scheduler gate `gpu_packages = ok and gpu_probe = appcontainer_ok`, effective GPU rate `coalesce(gpu_price, price × 5)` on lease/quote, composer asks for `gpu`, cabinet shows the GPU price + badges |
-| CI + release (item 5) | `release.yml` | in: `scan` must say `GPU none`, `gpu-check --force` must run the probe inside the AppContainer and exit 2, the self-update e2e requires `gpu_probe = no_gpu` on the hub |
+| Detection | `lib/gpu-detect.mjs`, the `gpu` block in `lib/scan.mjs` | on every heartbeat; the local page's boxes come from `gpuPageLines` |
+| GPU wheel set | `pylib-gpu-lock.json`, `scripts/pylib-gpu-lock.mjs`, `lib/pylib-gpu.mjs` | "share the GPU" fetches the set after the base set; `gpu_packages` on the heartbeat |
+| Sandbox probe | `lib/gpu-probe.mjs`, `probe/gpu_probe.py` (`probe/gpu_probe.ps1` by hand, `versum-node gpu-check`) | the node runs the probe on itself: driver stage on first start, torch stage once the set is in; `gpu_probe: appcontainer_ok \| blocked \| no_gpu` on the heartbeat; GPU jobs only after the torch stage passes |
+| Hub | migration 001600, `lib/nodes/resources.ts`, `lib/compute/{limits,jobs}.ts`, `lib/site/compose.ts`, the cabinet | scheduler gate `gpu_packages = ok and gpu_probe = appcontainer_ok`; effective GPU rate `coalesce(gpu_price, price × 5)` snapshotted at lease; the composer may plan `gpu: true` when a GPU node is online; `/nodes` shows the GPU price and the package/probe badges |
+| CI + release | `release.yml` | the Windows runner's `scan` must say `GPU none`, `gpu-check --force` must run the probe inside the AppContainer and exit 2 (no GPU), and the self-update e2e requires `gpu_probe = no_gpu` on the hub |
 
-**Still unanswered until the RTX 5070 Ti machine runs 0.4.4**: whether the AppContainer admits CUDA (section 3). The node answers it
-by itself on first start and says so on the heartbeat and on its page; `gpu-probe.json` in `<home>\state` is the full report. The
-16-core RTX node runs 0.4.0 and cannot self-update — one manual reinstall with the 0.4.4 installer, then it updates forever.
+**Open until a real NVIDIA machine runs 0.4.4 or later**: whether the Windows AppContainer admits CUDA (section 3). The
+node answers it by itself on first start and says so on the heartbeat and on its page; `gpu-probe.json` in
+`<home>\state` is the full report. The one RTX machine on the network still runs 0.4.0, which cannot update itself: one
+manual reinstall with the current installer, then it updates forever and the answer lands on `/nodes`.
 
 ## 1. Detection
 
 `detectGpu()` asks `nvidia-smi` twice (the CSV query for name / VRAM / driver version, the plain header for the
 driver's CUDA version — the only place it is printed). On Windows the binary ships inside the display driver at
-`C:\Windows\System32\nvidia-smi.exe`, so a stock driver install is enough. Without it, `Win32_VideoController`
-names the adapter and the driver but no CUDA version; such a GPU is reported with `cuda: null` and the GPU set stays
-unavailable with the reason "no CUDA driver found". macOS runs nothing (no NVIDIA driver exists). A machine without a
-GPU answers `{ vendor: null, …, count: 0 }` in under a second and never throws.
+`C:\Windows\System32\nvidia-smi.exe`, so a stock driver install is enough. Without it, `Win32_VideoController` names
+the adapter and the driver but no CUDA version; such a GPU is reported with `cuda: null` and the GPU set stays
+unavailable with the reason "no CUDA driver found". The WMI fallback counts only adapters of a known GPU vendor
+(NVIDIA, AMD, Intel, Apple): a VM's "Microsoft Hyper-V Video" is not a GPU (the first v0.4.4 release run counted it as
+one). macOS runs nothing (no NVIDIA driver exists). A machine without a GPU answers `{ vendor: null, …, count: 0 }` in
+under a second and never throws.
 
-Heartbeat block, added beside the existing flat `gpu_count / gpu_model / gpu_vram_mb`:
+Heartbeat block, beside the existing flat `gpu_count / gpu_model / gpu_vram_mb`:
 
 ```json
 "gpu": { "vendor": "nvidia", "model": "NVIDIA GeForce RTX 5070 Ti", "vram_mb": 16303, "cuda": "12.8", "driver": "572.16", "count": 1 }
@@ -39,14 +42,6 @@ Page words come from `gpuPageLines({ native, gpu, gpuPackages })`:
 | native | NVIDIA + CUDA | shown, enabled, note = `RTX 5070 Ti · 15.9 GB · CUDA 12.8 · driver 572.16 · <package line>` | hidden | `Network jobs: Linux container nodes only` |
 | container | none | shown, disabled | shown | `No GPU on this machine` |
 | container | any | shown, enabled | shown | — |
-
-### Wiring (after go-ahead)
-- `lib/node.mjs:93-101` — beside `state.pylib`: `state.gpu = await detectGpu({ log })` once at start and on every full scan; `state.gpuPylib = { status: 'idle' }`.
-- `lib/node.mjs:244` heartbeat `resources`: spread `gpu: state.gpu.gpu` and `...(gpuPackagesWord(state.gpuPylib) ? { gpu_packages: word } : {})`; the heartbeat must also be sent when the word changes (same `pkgChanged` trick as `python_packages`).
-- `lib/node.mjs:128` `/api/state`: add `gpu: state.gpu.gpu`, `gpu_pylib: { ...state.gpuPylib, line: describeGpuPylib(state.gpuPylib) }`.
-- `lib/local-ui.mjs:167-168, 206, 215`: replace the two hard-coded `disabled` lines with `gpuPageLines(...)`: hide `<label>` elements when `gpu_box`/`net_box` are false, write `line` into one grey `<p class="mut">`, `gpu_note` next to the box.
-- `lib/local-ui.mjs:40` `clampShare`: `gpu: !!s.gpu && (found?.gpu?.cuda || found?.gpu_count > 0)`.
-- `lib/scan.mjs:92-96`: on Windows use `detectGpu` instead of the bare `nvidia-smi` attempt (same flat fields, plus the block).
 
 ## 2. GPU packages
 
@@ -73,18 +68,14 @@ and every wheel gets three attempts. After unpacking it runs torch with both fol
 "torch imported but is_available() is False" is a `failed` with the reason. Progress for the page:
 `preparing GPU packages, 2.8 GB (1.1 GB done, 1 of 14)` → `GPU packages ready (14 wheels: 2.9.1+cu128 12.8 NVIDIA
 GeForce RTX 5070 Ti)`. Heartbeat word (`gpuPackagesWord`): `pending | ok | failed`, omitted while the box is unticked.
+The set runs only after the base set is `ok`; unticking the box sets the status back to `idle` (the folder stays, so
+re-ticking is instant); the self-updater waits while a GPU download is pending, and `<state>` survives an update.
 
 Job environment (`gpuJobEnv(base, { gpuDir, pylibDir })`): `PYTHONPATH = <pylib-gpu>;<pylib>`, `PATH += ;<pylib-gpu>\torch\lib`,
 `CUDA_PATH = <pylib-gpu>\torch\lib` — cupy's cuda-pathfinder and ctypes then find the CUDA runtime that torch bundles;
 the node ships no CUDA toolkit. Whether cupy actually resolves everything this way is one of the probe's informational
-rows (torch is the one that must pass).
-
-### Wiring (after go-ahead)
-- `lib/node.mjs:100-101`: after the base set is `ok` AND `cfg.share.gpu` is true: `ensureGpuPackages({ lock: GPU_LOCK, stateDir, pythonExe, gpu: state.gpu.gpu, pylibDir: state.pylib.dir, log, progress: state.gpuPylib })` then `ensureGpuGrants(...)`. Unticking the box sets status back to `idle` (the folder stays; re-ticking is instant through the marker). `GPU_LOCK` is read like `PYLIB_LOCK` (`lib/node.mjs:33-35`) from `pylib-gpu-lock.json` beside the app.
-- `lib/node.mjs:285`: count a pending GPU download as running work for `applyIfIdle` (same as `pylib`), so an update does not swap the binary mid-download (the download resumes anyway).
-- `lib/native.mjs:58` `fitsNative`: `if (manifest.limits.gpu && !gpuReady()) return 'GPU jobs: this node has no ready GPU package set'` instead of the flat refusal; `lib/native.mjs:243-253`: `gpuDir()` like `pylibDir()`, and `env = manifest.limits.gpu ? gpuJobEnv(nativeEnv(...), { gpuDir, pylibDir }) : nativeEnv(...)`.
-- `lib/node.mjs:258` lease `free.gpu`: `cfg.share.gpu && state.gpuPylib.status === 'ok'`.
-- `package.json` `files` and `release.yml` (the two `Copy-Item … pylib-lock.json` / `cp -R` lines, and `packaging/macos/build-app.sh`): ship `pylib-gpu-lock.json` beside `pylib-lock.json`; `lib/update.mjs` keeps `<state>` across updates, so the 2.8 GB survives an update.
+rows (torch is the one that must pass). `fitsNative` refuses a GPU piece until the set is ready, and the lease
+request says `free.gpu` only then.
 
 ## 3. The sandbox: can CUDA be reached from inside the AppContainer?
 
@@ -95,7 +86,7 @@ rows (torch is the one that must pass).
   driver live) carry `ALL APPLICATION PACKAGES:(RX)` — UWP games render through the very same user-mode D3D driver from
   the same folder. So the DLLs are READABLE; `ensureGpuGrants()` verifies both with `icacls` and logs loudly if not
   (changing those ACLs needs an administrator; the node never tries).
-- Our own folder `<state>/pylib-gpu` gets the same `grant-read` as the base pylib (helper command exists since 0.4.0).
+- Our own folder `<state>/pylib-gpu` gets the same `grant-read` as the base pylib.
 - What is NOT known is whether the driver's **kernel-mode door** admits a low-box token: CUDA on WDDM opens the adapter
   through the D3DKMT* calls in `gdi32`/`dxgkrnl`, the same path Direct3D takes — and Direct3D works in AppContainers —
   but `cuInit`/`cuCtxCreate` also create named sections and events, which a low-box token can do only in its own
@@ -105,31 +96,28 @@ rows (torch is the one that must pass).
 ### No GPU runner on GitHub
 `sudzikcoin/versum-node` belongs to a **user** account. GitHub's GPU runners (`gpu-t4-4-core`, Windows and Linux)
 are "larger runners", available only to **organizations** on Team/Enterprise plans. `gh api …/actions/hosted-runners`
-→ 404 for this account. So CI can prove only the no-GPU side (section 5); the CUDA question is answered on the
-RTX 5070 Ti machine with the probe.
+→ 404 for this account. So CI can prove only the no-GPU side (section 5); the CUDA question is answered on the first
+real NVIDIA machine.
 
-### The probe (run on the 16-core / RTX 5070 Ti node)
-`probe/gpu_probe.ps1` (ASCII-only, PowerShell 5.1) finds the installed node, prints nvidia-smi and the `icacls`
-verdict for `System32\nvcuda.dll` and every `nv*.inf_amd64_*` driver folder, grants read on `pylib-gpu`, then runs
-`probe/gpu_probe.py` **twice with the exact environment the node builds for a job** (`nativeEnv` + `gpuJobEnv`):
-once bare (owner token), once through `versum-sandbox.exe run` (AppContainer + Job Object, 8 GB, 900 s). Each run
-records four independent steps with the exact error text:
+### The probe (`lib/gpu-probe.mjs`, run by the node on itself)
+`runGpuProbe` runs `probe/gpu_probe.py` twice with the exact environment a job gets (`nativeEnv` + `gpuJobEnv`): once
+bare (owner token), once through the real executor (`versum-sandbox.exe run`, AppContainer + Job Object), and compares
+step by step. Stage `driver` runs on first start (before any package is downloaded): ctypes `nvcuda.dll`, `cuInit(0)`,
+`cuDriverGetVersion`, `cuDeviceGetCount`, `cuDeviceGetName`, `cuCtxCreate`, `cuMemGetInfo` — the driver alone, no
+Python package in the way. A CUDA error code here names the real obstacle (100 NO_DEVICE, 304 OPERATING_SYSTEM, 999
+UNKNOWN, 3 NOT_INITIALIZED, 35 INSUFFICIENT_DRIVER; a Windows error 126 / 0xC0000135 = a DLL it may not read). Stage
+`torch` runs once the set is in: import, `torch.cuda.is_available()`, device name, a 2048×2048 matmul on the device
+checked against a CPU slice — **this is the row that must pass** before GPU jobs are leased. cupy (a 512×512 matmul)
+and numba (a CPU `njit`) are informational rows.
 
-1. `nvcuda` — ctypes `nvcuda.dll`, `cuInit(0)`, `cuDriverGetVersion`, `cuDeviceGetCount`, `cuDeviceGetName`, `cuCtxCreate`, `cuMemGetInfo`: the driver alone, no Python package in the way. A CUDA error code here names the real obstacle (100 NO_DEVICE, 304 OPERATING_SYSTEM, 999 UNKNOWN, 3 NOT_INITIALIZED, 35 INSUFFICIENT_DRIVER; a Windows error 126/0xC0000135 = a DLL it may not read).
-2. `torch` — import, `torch.cuda.is_available()`, device name, a 2048×2048 matmul on the device checked against a CPU slice. **This is the row that must pass.**
-3. `cupy` — import + a 512×512 matmul (informational).
-4. `numba` — import + a CPU `njit` (informational).
+Verdicts on the heartbeat and the page: `appcontainer_ok` (the stage passed inside the container), `blocked` (passes
+bare, fails inside — the first failing call and its error text are in the report), `no_gpu`. The report is cached in
+`<home>\state\gpu-probe.json`, keyed by driver / CUDA / model / stage, and re-run when any of them changes.
+`versum-node gpu-check [--force]` runs it by hand (exit 0 works, 1 blocked, 2 no GPU; `--force` runs the sandboxed
+half even without a GPU, which is what CI does). `probe/gpu_probe.ps1` (ASCII-only, PowerShell 5.1) is the standalone
+version for a machine without the node installed.
 
-Verdicts: `WORKS` (torch matmul ran inside the container), `BLOCKED-BY-APPCONTAINER: … the first failing call is <nvcuda: cuInit returned 304 OPERATING_SYSTEM | torch: …>`, `NO-GPU`, `GPU-SET-BROKEN` (fails even bare). Report at `<home>\state\gpu-probe-report.json`.
-
-Until 0.4.4 unpacks the set itself, the probe can be pointed at any folder holding torch for cp312/win_amd64 (`-GpuDir`),
-e.g. `pip download`+unzip of the 14 lock wheels, or a plain `pip install --target`. The command on the machine:
-
-```
-powershell -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\Programs\versum-node\probe\gpu_probe.ps1"
-```
-
-### 3b. Fallback if the AppContainer blocks the driver
+### 3b. Fallback if the AppContainer blocks the driver — designed, NOT built
 Ship a second sandbox mode in `versum-sandbox.exe` (`run --mode jobobject`): the same Job Object (memory ceiling, CPU
 cap, 64 processes, kill-on-close) around a process started with a **restricted token** (`CreateRestrictedToken`:
 `DISABLE_MAX_PRIVILEGE`, the owner's SID set deny-only for groups except the user, low integrity via
@@ -138,22 +126,42 @@ Python tree readable (it already is). No network: a low-integrity token still ha
 **outbound firewall rule on the embedded python.exe path** (`netsh advfirewall firewall add rule … dir=out
 action=block program=<app>\python\python.exe`) — this is the one step that needs an administrator, once, at install
 (a UAC prompt in the installer, remembered by the rule itself), and it blocks the interpreter for CPU jobs too, which is
-correct: native jobs are offline by design. What this mode gives up against the AppContainer: the file-system is "deny
+correct: native jobs are offline by design. What this mode gives up against the AppContainer: the file system is "deny
 by integrity" (low-integrity may still READ most of the user's profile; `icacls` deny-ACEs on `%USERPROFILE%` for the
 low label close that at install), and it must be said on the local page. Decision rule: **AppContainer stays the
 sandbox for every CPU job regardless**; the Job Object mode would be used for GPU jobs only, and only if the probe
-says BLOCKED. Which one shipped is written here after the probe runs.
+says `blocked`. Which one ships is written here after the first real probe.
 
-## 4. Hub (plan — nothing touched; lines from `/opt/launchloop/src`, migrations in `supabase/migrations`)
+## 4. Hub (shipped: migration `20261205001600_v1_gpu_native`)
 
-1. **Resources**: `lib/nodes/resources.ts:110-141 parseNodeResources` — accept `gpu_packages` (`ok|pending|failed`) and the nested `gpu` block (`vendor`, `cuda` as text, VRAM already flat); `RESOURCE_COLUMNS:242`, `recordNodeResources:262-273`, `NodeResources` schema `lib/agent-api/endpoints.ts:52-54`. Migration: `alter table node_resources add column gpu_packages text check (… in ('ok','pending','failed')), add column gpu_cuda text` (symmetric to `20261205001400_v1_python_packages.sql:6-7`).
-2. **Scheduler**: a new migration redefining BOTH `pieces_for_node` (currently `20261205001400_v1_python_packages.sql:34`) and `cheaper_eligible_node_exists` (`20261205001500_v1_cheapest_first.sql:29-34`, which today also lacks the `python_packages = 'ok'` condition) so the native gate reads
-   `… or (j.kind = 'python' and not j.req_network and n.python_packages = 'ok' and (not j.req_gpu or n.gpu_packages = 'ok'))`. Carry the decoupled cap from `20261205001400_v1_cap_decoupled.sql:41` forward (the python_packages copy silently reverted it). TypeScript mirrors in lockstep: `lib/compute/limits.ts:21` and `lib/compute/jobs.ts:244`; `CapacityNode` gains `gpu_packages` (`resources.ts:442,467`).
-3. **Composer**: `app/api/jobs/compose/route.ts:38,41` hard-wire `gpu: false` on both the limits query and the parsed req — let the model ask (`req.gpu`), clamp to `liveLimits({ gpu: true })`. Prompt `lib/site/compose.ts:20` adds "on a GPU node also torch 2.9 (CUDA), cupy, numba; write `device = 'cuda'` and `torch.cuda.synchronize()` around timings"; `:28-29` drop "a GPU model" from the refusal list; `:30 limitsLine` names the GPU + VRAM when one is live; `Composed.req` (`:13`) and the clamp (`:54-62`) get a `gpu` slot and a `clamped` sentence ("no GPU node is online now: running on the CPU").
-4. **Price**: new column `executors.gpu_price_per_minute_usd numeric(12,6)` (nullable; null = 5× `price_per_minute_usd`, the default suggestion). `quoteJob` (`lib/compute/jobs.ts:246`) takes `coalesce(gpu_price, price*5)` when `req.gpu`; the lease snapshot (`20261205000100_v1_jobs.sql:105,167`) and billing (`20261205000400_v1_scheduler.sql:101`) use the same rate. Owner doors: `NodeOfferInput`/`setNodeOffer` (`resources.ts:326-372`, reuse `parsePricePerMinute:229`), the offer route allow-list (`app/api/nodes/[id]/offer/route.ts:23`), `NodesLive.tsx:72` (a second price field shown only when `gpu_count > 0`, plus a `gpu_packages` badge — today `python_packages` is fetched but never rendered), and the node's local page (`POST /api/offer` → `PUT /me/node { gpu_price_per_minute_usd }`, suggestion = 5× the CPU price).
+1. **Resources**: `node_resources` gained `gpu_cuda`, `gpu_packages` (`ok | pending | failed`) and `gpu_probe`
+   (`appcontainer_ok | blocked | no_gpu`); `parseNodeResources` accepts the nested `gpu` block and both words.
+2. **Scheduler**: `pieces_for_node`, `cheaper_eligible_node_exists` and `lease_piece` were redefined together. A
+   `script_native` node gets a python piece without network once `python_packages = ok`, and a GPU piece only with
+   `gpu_packages = ok and gpu_probe = appcontainer_ok`. The TypeScript mirrors (`lib/compute/limits.ts`,
+   `quoteJob` in `lib/compute/jobs.ts`, `nativeFits` / `effectiveRate` in `lib/nodes/resources.ts`) say the same.
+3. **Composer**: the prompt is told whether a GPU node is online (and what it is — torch cu128, cupy, numba); the
+   model may answer `gpu: true`, which is clamped to the GPU nodes online now or run on the CPU with a `clamped`
+   sentence on the Run card; the Run page carries `gpu` into the job.
+4. **Price**: `executors.gpu_price_per_minute_usd` (nullable; null = 5 × `price_per_minute_usd`). `quoteJob`, the
+   scheduler's cap gate and `lease_piece` use the effective rate for `req_gpu` jobs; the lease snapshots it. Owner
+   doors take it: the node's `PUT /me/node`, the owner's `PUT /api/nodes/:id/offer`, the local page, the cabinet.
+   `/nodes` shows the GPU price plus `gpu_packages` / `gpu_probe` badges.
+5. The gated `/test/e2e-release` door returns the gpu fields so the release pipeline can assert them.
 
-## 5. CI and release (plan)
+## 5. CI and release (shipped in `release.yml`)
 
-- `npm test` already runs on `ubuntu-latest` in `release.yml` → `test/gpu.test.mjs` is in: detection returns none without `nvidia-smi`, the page hides both boxes on a native node without a GPU, the lock is well-formed, the installer resumes/verifies/stamps, the grant never touches the DriverStore.
-- Windows runner step (after the self-updater is in): `stage\versum-node.exe scan` must print `GPU      none`; a `gpu-check` CLI (wraps `probe/gpu_probe.ps1`) must exit 2 (`NO-GPU`); the existing e2e python job must still pass with the box hidden. No GPU runner exists for this account (section 3).
-- Release: bump `PACKAGE_VERSION`/`package.json` to 0.4.4, ship `pylib-gpu-lock.json` in the app bundle, push the `v0.4.4` tag → the 0.4.3 nodes pick it up from the heartbeat's `release` block. Then on the 16-core node: tick the box, watch `preparing GPU packages, 2.8 GB …` → `ok`, `gpu_packages: ok` on the heartbeat, run the words-in job "Using the GPU, multiply two 8192×8192 random matrices 20 times and report the time" and show lease → exit 0 → report.
+- `npm test` on `ubuntu-latest` runs `test/gpu.test.mjs`: detection returns none without `nvidia-smi`, the page hides
+  both boxes on a native node without a GPU, the lock is well-formed, the installer resumes / verifies / stamps, the
+  grant never touches the DriverStore.
+- Windows runner: `versum-node.exe scan` must print `GPU      none`; `gpu-check --force` must run `gpu_probe.py` bare
+  and inside the real AppContainer and exit 2 (both halves report `FileNotFoundError: nvcuda.dll` → `no_gpu`); the
+  python e2e job must still pass with the box hidden; after the self-update the hub's door must show
+  `gpu_probe = no_gpu` for that node. Two things the first v0.4.4 runs taught: the WMI fallback must ignore the
+  runner's Hyper-V display adapter, and in a GitHub `pwsh` step the last native command's non-zero exit is the step's
+  exit, so the step reads the probe's exit code itself.
+- Release: `pylib-gpu-lock.json` ships inside the app bundle on both platforms; the `v0.4.4` tag went out on
+  2026-10-26 and every 0.4.3+ node picked it up from the heartbeat's `release` block.
+- Still to do on a machine, not in CI: install the current release on the RTX machine, tick the box, watch
+  `preparing GPU packages, 2.8 GB …` → `ok`, read `gpu_probe` on `/nodes`, and run the words-in job "Using the GPU,
+  multiply two 8192×8192 random matrices 20 times and report the time".

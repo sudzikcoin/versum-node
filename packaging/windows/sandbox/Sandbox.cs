@@ -22,9 +22,10 @@
 //       6. Deletes nothing itself: the node calls `delete --name` after the directory is wiped.
 //   versum-sandbox.exe run --mode jobobject … (0.4.6 — GPU jobs only, and only when the AppContainer probe said `blocked`)
 //       The same Job Object around a process started with a RESTRICTED TOKEN instead of an AppContainer:
-//       CreateRestrictedToken(DISABLE_MAX_PRIVILEGE, restricting SIDs = RESTRICTED + ALL APPLICATION PACKAGES) — the
-//       process may touch only objects whose DACL grants one of those two (the Python tree and the job directory are
-//       granted; the user's profile grants neither) — lowered to LOW integrity (no write to anything labelled medium);
+//       CreateRestrictedToken(DISABLE_MAX_PRIVILEGE, restricting SID = RESTRICTED S-1-5-12) — the process may touch only
+//       objects whose DACL grants RESTRICTED (Windows and System32 do by default; grant-read adds it to the Python tree and
+//       the package folders; the job directory gets it; the user's profile does not) — lowered to LOW integrity (no write to
+//       anything labelled medium);
 //       the job directory is labelled Low and granted to RESTRICTED. A restricted token still has a network stack, so
 //       `firewall-block` (below, administrator, once) blocks the embedded interpreter outbound. What this mode gives
 //       up against the AppContainer is the object namespace isolation; what it may give back is the driver's door.
@@ -221,23 +222,25 @@ static class Program
         return 0;
     }
 
-    // ── 0.4.6: the restricted, low-integrity token (restricting SIDs: RESTRICTED + ALL APPLICATION PACKAGES) ──
+    // ── 0.4.6: the restricted, low-integrity token (restricting SID: RESTRICTED) ──
     static IntPtr RestrictedToken()
     {
         IntPtr tok;
-        if (!Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TOKEN_ALL_ACCESS, out tok)) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcessToken failed");
-        IntPtr sidRestricted, sidAap;
+        if (!Native.OpenProcessToken(Native.GetCurrentProcess(), Native.TOKEN_ALL_ACCESS, out tok)) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcessToken failed (win32 " + Marshal.GetLastWin32Error() + ")");
+        // restricting SIDs: RESTRICTED only. An app-package SID (S-1-15-2-1) is refused by CreateRestrictedToken (seen on CI:
+        // ERROR_INVALID_PARAMETER), so grant-read gives the Python tree RESTRICTED read+execute beside ALL APPLICATION PACKAGES;
+        // Windows and System32 grant RESTRICTED by default, the user's profile does not.
+        IntPtr sidRestricted;
         if (!Native.ConvertStringSidToSid("S-1-5-12", out sidRestricted)) throw new Win32Exception();
-        if (!Native.ConvertStringSidToSid("S-1-15-2-1", out sidAap)) throw new Win32Exception();
-        var arr = new Native.SID_AND_ATTRIBUTES[] { new Native.SID_AND_ATTRIBUTES { Sid = sidRestricted, Attributes = 0 }, new Native.SID_AND_ATTRIBUTES { Sid = sidAap, Attributes = 0 } };
+        var arr = new Native.SID_AND_ATTRIBUTES[] { new Native.SID_AND_ATTRIBUTES { Sid = sidRestricted, Attributes = 0 } };
         int one = Marshal.SizeOf(typeof(Native.SID_AND_ATTRIBUTES));
         IntPtr p = Marshal.AllocHGlobal(one * arr.Length);
         for (int i = 0; i < arr.Length; i++) Marshal.StructureToPtr(arr[i], (IntPtr)((long)p + i * one), false);
         IntPtr restricted;
         bool ok = Native.CreateRestrictedToken(tok, Native.DISABLE_MAX_PRIVILEGE, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)arr.Length, p, out restricted);
         int err = Marshal.GetLastWin32Error();
-        Marshal.FreeHGlobal(p); Native.LocalFree(sidRestricted); Native.LocalFree(sidAap); Native.CloseHandle(tok);
-        if (!ok) throw new Win32Exception(err, "CreateRestrictedToken failed");
+        Marshal.FreeHGlobal(p); Native.LocalFree(sidRestricted); Native.CloseHandle(tok);
+        if (!ok) throw new Win32Exception(err, "CreateRestrictedToken failed (win32 " + err + ": " + new Win32Exception(err).Message + ")");
         // low integrity: S-1-16-4096
         IntPtr low;
         if (!Native.ConvertStringSidToSid("S-1-16-4096", out low)) throw new Win32Exception();
@@ -247,7 +250,7 @@ static class Program
         ok = Native.SetTokenInformation(restricted, Native.TokenIntegrityLevel, lp, (uint)one);
         err = Marshal.GetLastWin32Error();
         Marshal.FreeHGlobal(lp); Native.LocalFree(low);
-        if (!ok) throw new Win32Exception(err, "SetTokenInformation(TokenIntegrityLevel) failed");
+        if (!ok) throw new Win32Exception(err, "SetTokenInformation(TokenIntegrityLevel) failed (win32 " + err + ")");
         return restricted;
     }
     static void LabelLow(string dir)
@@ -291,13 +294,14 @@ static class Program
     static int GrantRead(string dir)
     {
         // S-1-15-2-1 = ALL APPLICATION PACKAGES: every AppContainer may read and execute this tree (the Python runtime)
-        var sid = new SecurityIdentifier("S-1-15-2-1");
+        // 0.4.6: and RESTRICTED (S-1-5-12), so the restricted-token mode's interpreter can read the same tree
         var di = new DirectoryInfo(dir);
         if (!di.Exists) throw new DirectoryNotFoundException(dir);
         var acl = di.GetAccessControl();
-        acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-        di.SetAccessControl(acl);   // propagates the inheritable entry to everything already inside
-        Say("granted ALL APPLICATION PACKAGES read+execute on " + dir);
+        foreach (var s in new[] { "S-1-15-2-1", "S-1-5-12" })
+            acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(s), FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+        di.SetAccessControl(acl);   // propagates the inheritable entries to everything already inside
+        Say("granted ALL APPLICATION PACKAGES and RESTRICTED read+execute on " + dir);
         return 0;
     }
 
@@ -371,7 +375,7 @@ static class Program
         {
             token = RestrictedToken();
             sidObj = new SecurityIdentifier("S-1-5-12");   // RESTRICTED: what the job directory is granted to
-            Say("restricted token: RESTRICTED + ALL APPLICATION PACKAGES, low integrity, no privileges");
+            Say("restricted token: restricting SID RESTRICTED, low integrity, no privileges");
         }
 
         // 2 — the one place it may write
@@ -433,7 +437,8 @@ static class Program
             if (err == 5 /*ERROR_ACCESS_DENIED*/) ok = mode == "appcontainer"
                 ? Native.CreateProcess(null, cl, IntPtr.Zero, IntPtr.Zero, true, flags | Native.CREATE_BREAKAWAY_FROM_JOB, envBlock, dir, ref siex, out pi)
                 : Native.CreateProcessAsUser(token, null, cl, IntPtr.Zero, IntPtr.Zero, true, flags | Native.CREATE_BREAKAWAY_FROM_JOB, envBlock, dir, ref siex, out pi);
-            if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), mode == "appcontainer" ? "CreateProcess in AppContainer failed" : "CreateProcessAsUser with the restricted token failed");
+            int err2 = Marshal.GetLastWin32Error();
+            if (!ok) throw new Win32Exception(err2, (mode == "appcontainer" ? "CreateProcess in AppContainer failed" : "CreateProcessAsUser with the restricted token failed") + " (win32 " + err2 + ": " + new Win32Exception(err2).Message + ")");
         }
         if (!Native.AssignProcessToJobObject(job, pi.hProcess)) { int err = Marshal.GetLastWin32Error(); Native.TerminateJobObject(job, 1); throw new Win32Exception(err, "AssignProcessToJobObject failed"); }
         Native.ResumeThread(pi.hThread);

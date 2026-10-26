@@ -142,8 +142,8 @@ sandboxes do not do: [docs/native-sandbox.md](docs/native-sandbox.md). Threat mo
   works in restricted-token mode | blocked".
 - **If the AppContainer blocks the driver (0.4.6).** The probe runs its sandboxed half once more through
   `versum-sandbox.exe run --mode jobobject`: the same Job Object around a **restricted, low-integrity token**
-  (restricting SIDs RESTRICTED + ALL APPLICATION PACKAGES, so it sees the Python tree and its job directory and
-  nothing of yours) with the interpreter blocked outbound by a firewall rule — the one step that needs
+  (restricting SID RESTRICTED, so it sees the system directories, the Python tree, the package folders and its job
+  directory, and nothing of yours) with the interpreter blocked outbound by a firewall rule — the one step that needs
   administrator rights, once; Windows asks when the verdict first comes back `jobobject_ok`. GPU jobs then run in
   that mode; CPU jobs stay in the AppContainer. Details and what is and is not proven: `docs/gpu-native.md` 3b.
   The hub leases GPU pieces to a native node only with `gpu_packages = ok` **and** `gpu_probe =

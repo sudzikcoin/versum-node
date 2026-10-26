@@ -120,10 +120,10 @@ version for a machine without the node installed.
 ### 3b. Fallback if the AppContainer blocks the driver — BUILT in 0.4.6, behind the verdict
 `versum-sandbox.exe run --mode jobobject`: the same Job Object (memory ceiling, CPU cap, 64 processes, kill-on-close)
 around a process started with a **restricted token** instead of an AppContainer — `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE,
-restricting SIDs = RESTRICTED S-1-5-12 + ALL APPLICATION PACKAGES S-1-15-2-1)`, lowered to **low integrity**
+restricting SID = RESTRICTED S-1-5-12; an app-package SID is refused by CreateRestrictedToken, which CI found)`, lowered to **low integrity**
 (`SetTokenInformation(TokenIntegrityLevel, S-1-16-4096)`), started with `CreateProcessAsUser`. The process may touch
-only objects whose DACL grants one of the two restricting SIDs: the Python tree and the package folders already grant
-ALL APPLICATION PACKAGES (`grant-read`), the job directory is granted to RESTRICTED and labelled Low (`icacls
+only objects whose DACL grants RESTRICTED: Windows and System32 do by default, `grant-read` now adds RESTRICTED read+execute
+to the Python tree and the package folders beside ALL APPLICATION PACKAGES, the job directory is granted to RESTRICTED and labelled Low (`icacls
 /setintegritylevel (OI)(CI)L`) so the low-integrity process can write there and nowhere labelled medium; the user's
 profile grants neither SID. A restricted token still has a network stack, so the block is an **outbound firewall rule
 on the embedded python.exe** (`versum-sandbox.exe firewall-block --exe <python>` → `netsh advfirewall … dir=out

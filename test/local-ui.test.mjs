@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { writeAllowed, clampShare, parsePrice, marketHint, windowsToText } from '../lib/local-ui.mjs'
+import { writeAllowed, clampShare, parsePrice, marketHint, windowsToText, suggestName } from '../lib/local-ui.mjs'
 import { bootstrapFromEnv, parseWindowsText } from '../lib/config.mjs'
 import { offerFromConfig } from '../lib/node.mjs'
 
@@ -56,4 +56,15 @@ test('paused → enabled false, the offer kept', () => {
   assert.equal(offerFromConfig(cfg).enabled, false)
   assert.equal(offerFromConfig({ ...cfg, paused: false }).enabled, true)
   assert.equal(offerFromConfig({ ...cfg, paused: false, price_per_minute_usd: null }).enabled, false)
+})
+
+test('0.4.5 — "Name this computer" is prefilled: a chosen hostname wins, a factory one yields the CPU family + PC/Mac, nothing known → My computer', () => {
+  assert.equal(suggestName({ hostname: 'HP-Laptop', cpu_model: 'Intel(R) Core(TM) i5-1135G7 @ 2.40GHz', os: 'win32' }), 'HP Laptop')
+  assert.equal(suggestName({ hostname: 'DESKTOP-K3J2Q9A', cpu_model: 'AMD Ryzen 7 5800X 8-Core Processor', os: 'win32' }), 'Ryzen 7 PC')
+  assert.equal(suggestName({ hostname: 'LAPTOP-7F2A1B', cpu_model: 'Intel(R) Core(TM) i7-1165G7', os: 'win32' }), 'Core i7 PC')
+  assert.equal(suggestName({ hostname: 'PC-01', cpu_model: 'Intel(R) Core(TM) Ultra 7 155H', os: 'win32' }), 'Core Ultra 7 PC')
+  assert.equal(suggestName({ hostname: 'Mishas-MacBook-Pro.local', cpu_model: 'Apple M2 Pro', os: 'darwin' }), 'Apple M2 Pro Mac')
+  assert.equal(suggestName({ hostname: 'studio-render', cpu_model: 'AMD EPYC 7763', os: 'linux' }), 'studio render')
+  assert.equal(suggestName({ hostname: 'localhost', cpu_model: '', os: 'linux' }), 'My computer')
+  assert.equal(suggestName({}), 'My computer')
 })

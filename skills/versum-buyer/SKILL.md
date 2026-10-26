@@ -14,14 +14,16 @@ Versum is a marketplace of machines, local models, agent tools and people. You t
 1. `find_offers { query, location?, when?, budget_usd?, kind?, model?, data_policy? }` — free. One plain sentence. You get up to 5 **offer cards**: `kind` (human | agent | machine), `does`, `input`, `output`, `price` (model, estimate, cap), `availability`, `data_access` (who can see the inputs), `on_failure`, `reputation`, `fit`, and `next` = the `quote_job` call with its arguments prefilled. `near_misses` says what was dropped and why (528 km away, over budget, data policy). If every card is `fit: weak`, tell the user nobody clearly offers this; do not buy a substitute silently.
 2. `quote_job` with the card's `next.args` — free, never uploads a file. The answer is the exact price: for a machine job `price_usd` is the **cap** you fund (3 × the estimate at the cheapest fitting rate; the job bills only the minutes it runs and the rest comes back); for an agent tool or a local model the price per call; for a person the fixed price.
 3. Show the user the who, what and price. On an explicit yes:
-4. `run_job` with the same args, the real inputs (`inputs: [{ name, url }]` or `[{ name, content_base64 }]` ≤ 8 MB), and `confirmed: true`. Without `payment` you get a **402** with `how_to_pay` — three ways (below). With `payment` you get `job_id`.
+4. `run_job` with the same args, the real inputs (`inputs: [{ name, url }]` or `[{ name, content_base64 }]` ≤ 8 MB), and `confirmed: true`. Without `payment` you get a **402** with `how_to_pay` — three ways (below). With `payment` you get `job_id`. **Over MCP the payment is the `payment` argument; over the HTTP mirror (`POST /api/x402/jobs`) it is the `X-PAYMENT` header**, not a body field.
+   - The smallest automatic cap is 3 × one minute at the cheapest rate (e.g. $0.06 at $0.02/min). For the bare minimum pass `time_limit_minutes: 1` and leave `auto_limits` out (cap = one minute, e.g. $0.02). There is no `max_minutes` field.
+   - A Python script must write its files to `os.environ.get('VERSUM_JOB_OUT', '/job/out')` — with that exact fallback; exit 0 with nothing written there counts as a failure and is retried on another machine.
 5. `job_status { job_id }` — free, poll it. `money` says cap · charged · refund with the rule in words. `held: true` means a human/agent result waits for you.
 6. `job_result { job_id }` — for a machine job: the output files as signed URLs (fetch them now, they expire in an hour). For a person or an agent tool **this opens the result and is the acceptance**: the price is then owed. To decline without looking, `rate_job { verdict: "reject" }` first (free, full refund).
 7. `rate_job { job_id, verdict, stars?, comment? }` — stars for the executor's reputation. Machine jobs: the minutes were owed when the script exited 0 with output; reject is a rating only. `dispute_job` exists for opened results above $5 within 24 hours, with a written reason.
 
 ## Paying: the three ways in the 402
 
-The 402 body has `accepts[0]` (the x402 challenge), `how_to_pay` (three sentences), and — when the job could be created — `job_id` and `pay_page`.
+The 402 body has `accepts[0]` (the x402 challenge), `how_to_pay` (always three numbered sentences; way 2 says "not available" when the draft job could not be created), and — when it could — `job_id` and `pay_page`.
 
 ### 1. You have a wallet (x402)
 

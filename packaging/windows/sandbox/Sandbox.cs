@@ -128,8 +128,14 @@ static class Native
     public static extern bool CreateProcessAsUser(IntPtr hToken, string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFOEX lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
     [DllImport("kernel32.dll")]
     public static extern IntPtr LocalFree(IntPtr hMem);
-    public const uint TOKEN_ALL_ACCESS = 0xF01FF, DISABLE_MAX_PRIVILEGE = 0x1, SE_GROUP_INTEGRITY = 0x20;
-    public const int TokenIntegrityLevel = 25;
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool GetTokenInformation(IntPtr TokenHandle, int TokenInformationClass, IntPtr TokenInformation, uint TokenInformationLength, out uint ReturnLength);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool CopySid(uint nDestinationSidLength, IntPtr pDestinationSid, IntPtr pSourceSid);
+    [DllImport("advapi32.dll")]
+    public static extern uint GetLengthSid(IntPtr pSid);
+    public const uint TOKEN_ALL_ACCESS = 0xF01FF, DISABLE_MAX_PRIVILEGE = 0x1, SE_GROUP_INTEGRITY = 0x20, SE_GROUP_LOGON_ID = 0xC0000000;
+    public const int TokenIntegrityLevel = 25, TokenGroups = 2;
     [StructLayout(LayoutKind.Sequential)]
     public struct SID_AND_ATTRIBUTES { public IntPtr Sid; public uint Attributes; }
 
@@ -232,14 +238,20 @@ static class Program
         // Windows and System32 grant RESTRICTED by default, the user's profile does not.
         IntPtr sidRestricted;
         if (!Native.ConvertStringSidToSid("S-1-5-12", out sidRestricted)) throw new Win32Exception();
-        var arr = new Native.SID_AND_ATTRIBUTES[] { new Native.SID_AND_ATTRIBUTES { Sid = sidRestricted, Attributes = 0 } };
+        // plus the session's LOGON SID: the window station and desktop grant it and nothing else the restricted process
+        // holds — without it every process dies at start with 0xC0000142 (STATUS_DLL_INIT_FAILED, seen on CI). Files in the
+        // user's profile grant the user SID, not the logon SID, so this opens no file.
+        IntPtr logonSid = LogonSid(tok);
+        var list = new List<Native.SID_AND_ATTRIBUTES> { new Native.SID_AND_ATTRIBUTES { Sid = sidRestricted, Attributes = 0 } };
+        if (logonSid != IntPtr.Zero) list.Add(new Native.SID_AND_ATTRIBUTES { Sid = logonSid, Attributes = 0 });
+        var arr = list.ToArray();
         int one = Marshal.SizeOf(typeof(Native.SID_AND_ATTRIBUTES));
         IntPtr p = Marshal.AllocHGlobal(one * arr.Length);
         for (int i = 0; i < arr.Length; i++) Marshal.StructureToPtr(arr[i], (IntPtr)((long)p + i * one), false);
         IntPtr restricted;
         bool ok = Native.CreateRestrictedToken(tok, Native.DISABLE_MAX_PRIVILEGE, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)arr.Length, p, out restricted);
         int err = Marshal.GetLastWin32Error();
-        Marshal.FreeHGlobal(p); Native.LocalFree(sidRestricted); Native.CloseHandle(tok);
+        Marshal.FreeHGlobal(p); Native.LocalFree(sidRestricted); if (logonSid != IntPtr.Zero) Marshal.FreeHGlobal(logonSid); Native.CloseHandle(tok);
         if (!ok) throw new Win32Exception(err, "CreateRestrictedToken failed (win32 " + err + ": " + new Win32Exception(err).Message + ")");
         // low integrity: S-1-16-4096
         IntPtr low;
@@ -252,6 +264,35 @@ static class Program
         Marshal.FreeHGlobal(lp); Native.LocalFree(low);
         if (!ok) throw new Win32Exception(err, "SetTokenInformation(TokenIntegrityLevel) failed (win32 " + err + ")");
         return restricted;
+    }
+    // the token's logon SID (group with SE_GROUP_LOGON_ID), copied into HGlobal memory; IntPtr.Zero when none
+    static IntPtr LogonSid(IntPtr tok)
+    {
+        uint len;
+        Native.GetTokenInformation(tok, Native.TokenGroups, IntPtr.Zero, 0, out len);
+        if (len == 0) return IntPtr.Zero;
+        IntPtr buf = Marshal.AllocHGlobal((int)len);
+        try
+        {
+            if (!Native.GetTokenInformation(tok, Native.TokenGroups, buf, len, out len)) return IntPtr.Zero;
+            int count = Marshal.ReadInt32(buf);
+            int one = Marshal.SizeOf(typeof(Native.SID_AND_ATTRIBUTES));
+            IntPtr first = (IntPtr)((long)buf + IntPtr.Size);   // GroupCount is padded to pointer size before Groups[]
+            for (int i = 0; i < count; i++)
+            {
+                var g = (Native.SID_AND_ATTRIBUTES)Marshal.PtrToStructure((IntPtr)((long)first + i * one), typeof(Native.SID_AND_ATTRIBUTES));
+                if ((g.Attributes & Native.SE_GROUP_LOGON_ID) == Native.SE_GROUP_LOGON_ID)
+                {
+                    uint n = Native.GetLengthSid(g.Sid);
+                    IntPtr copy = Marshal.AllocHGlobal((int)n);
+                    if (Native.CopySid(n, copy, g.Sid)) { Say("restricted token: logon SID " + new SecurityIdentifier(g.Sid).Value + " kept for the desktop"); return copy; }
+                    Marshal.FreeHGlobal(copy);
+                }
+            }
+            Say("restricted token: no logon SID in the token (a service session?) — the process may fail to start");
+            return IntPtr.Zero;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
     }
     static void LabelLow(string dir)
     {
@@ -375,7 +416,7 @@ static class Program
         {
             token = RestrictedToken();
             sidObj = new SecurityIdentifier("S-1-5-12");   // RESTRICTED: what the job directory is granted to
-            Say("restricted token: restricting SID RESTRICTED, low integrity, no privileges");
+            Say("restricted token: restricting SIDs RESTRICTED + logon SID, low integrity, no privileges");
         }
 
         // 2 — the one place it may write
